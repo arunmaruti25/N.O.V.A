@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment and sensitive keys
+.env
+backend/.env
+*.local
+
+# Node
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+
+# Runtime data & caches
+backend/data/audio/
+backend/data/vision/
+backend/data/observation/
+*.mp3
+*.wav
+*.png
+*.jpg
+
+# OS and IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

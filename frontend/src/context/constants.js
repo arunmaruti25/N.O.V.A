@@ -1,0 +1,51 @@
+export const NOVA_STATES = {
+  IDLE: "IDLE",
+  LISTENING: "LISTENING",
+  SPEECH_DETECTED: "SPEECH_DETECTED",
+  WAITING_FOR_CONTINUATION: "WAITING_FOR_CONTINUATION",
+  FINALIZING: "FINALIZING",
+  PROCESSING: "PROCESSING",
+  THINKING: "THINKING",
+  EXECUTING: "EXECUTING",
+  PAUSED: "PAUSED",
+  SPEAKING: "SPEAKING",
+  CONFIRMATION: "CONFIRMATION",
+  SUCCESS: "SUCCESS",
+  ERROR: "ERROR",
+  OFFLINE: "OFFLINE",
+};
+
+export const AVAILABLE_MODELS = [
+  {
+    provider: "Gemini",
+    mode: "Reasoning",
+    tag: "gemini-2.5-pro",
+    color: "#4285F4",
+    latency: "340ms",
+    desc: "Complex multi-step logic & multimodal perception",
+  },
+  {
+    provider: "Groq",
+    mode: "Fast",
+    tag: "llama-3.3-70b",
+    color: "#F55036",
+    latency: "65ms",
+    desc: "Instantaneous conversational velocity & latency-critical flow",
+  },
+  {
+    provider: "NVIDIA",
+    mode: "Coding",
+    tag: "nemotron-70b",
+    color: "#76B900",
+    latency: "190ms",
+    desc: "High-throughput system programming & script automation",
+  },
+  {
+    provider: "Ollama",
+    mode: "Local",
+    tag: "deepseek-r1:8b",
+    color: "#94A3B8",
+    latency: "14ms",
+    desc: "Private offline inferencing directly on device",
+  },
+];
