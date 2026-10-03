@@ -7,12 +7,18 @@ import {
   Lock,
   ExternalLink,
   Sliders,
+  Activity,
+  CheckCircle2,
+  Eye,
 } from "lucide-react";
 import { useNova } from "../context/useNova";
 import { NOVA_STATES } from "../context/constants";
 
 export default function ComputerView() {
   const {
+    currentTask,
+    status,
+    statusDetail,
     setStatus,
     setStatusDetail,
     requestPermission,
@@ -122,6 +128,57 @@ export default function ComputerView() {
           display state, and secure power options.
         </p>
       </div>
+
+      {/* Active Autonomous Task & Verification Monitor (Phase G) */}
+      {currentTask && currentTask.description && (
+        <div
+          className="glass-card"
+          style={{
+            padding: "16px 20px",
+            border: "1px solid rgba(6, 182, 212, 0.35)",
+            background: "linear-gradient(135deg, rgba(6, 182, 212, 0.08) 0%, rgba(20, 24, 38, 0.6) 100%)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Activity size={16} color="var(--color-nova-cyan)" />
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", color: "var(--color-nova-cyan)", textTransform: "uppercase" }}>
+                Autonomous Task Execution
+              </span>
+            </div>
+            <span
+              className="badge"
+              style={{
+                fontSize: 11,
+                padding: "2px 8px",
+                background: currentTask.status === "COMPLETED" ? "rgba(16, 185, 129, 0.16)" : "rgba(6, 182, 212, 0.16)",
+                color: currentTask.status === "COMPLETED" ? "var(--color-state-success)" : "var(--color-nova-cyan)",
+                border: "1px solid rgba(6, 182, 212, 0.4)",
+              }}
+            >
+              {status || currentTask.status}
+            </span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--color-text-primary)" }}>
+              {currentTask.description}
+            </span>
+            <span style={{ fontSize: 12, color: "var(--color-text-secondary)", fontFamily: "var(--font-mono)" }}>
+              Step {currentTask.current_step || 1} / {currentTask.total_steps || 1}
+            </span>
+          </div>
+
+          {statusDetail && (
+            <div style={{ fontSize: 12, color: "var(--color-nova-cyan)", background: "rgba(0,0,0,0.25)", padding: "6px 10px", borderRadius: "var(--radius-sm)" }}>
+              {statusDetail}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Control Grid */}
       <div

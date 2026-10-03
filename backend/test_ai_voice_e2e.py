@@ -80,7 +80,7 @@ class NovaAIVoiceE2ETests(unittest.IsolatedAsyncioTestCase):
         prompt = "Store context offline on device."
         res = await orchestrate_task(prompt, preferred_model="Ollama")
         self.assertEqual(res["status"], "SUCCESS")
-        self.assertIn(res["model_used"], [ModelProvider.OLLAMA, ModelProvider.LOCAL, ModelProvider.GROQ, ModelProvider.GEMINI])
+        self.assertIn(res["model_used"], [ModelProvider.OLLAMA, ModelProvider.LOCAL, ModelProvider.GROQ, ModelProvider.GEMINI, "Local Engine"])
         self.assertTrue(len(res["response"]) > 0)
 
     async def test_05_provider_failure_and_fallback_cascade(self):

@@ -122,13 +122,25 @@ export default function ActivityView() {
               <span
                 className="badge"
                 style={{
-                  background: "rgba(16, 185, 129, 0.12)",
-                  color: "var(--color-state-success)",
-                  border: "1px solid rgba(16, 185, 129, 0.3)",
+                  background: act.verified
+                    ? "rgba(6, 182, 212, 0.16)"
+                    : act.result === "failed"
+                    ? "rgba(239, 68, 68, 0.16)"
+                    : "rgba(16, 185, 129, 0.12)",
+                  color: act.verified
+                    ? "var(--color-nova-cyan)"
+                    : act.result === "failed"
+                    ? "var(--color-state-error)"
+                    : "var(--color-state-success)",
+                  border: act.verified
+                    ? "1px solid rgba(6, 182, 212, 0.4)"
+                    : act.result === "failed"
+                    ? "1px solid rgba(239, 68, 68, 0.3)"
+                    : "1px solid rgba(16, 185, 129, 0.3)",
                   gap: 4,
                 }}
               >
-                <CheckCircle2 size={12} /> Success
+                <CheckCircle2 size={12} /> {act.verified ? "Verified" : (act.result === "failed" ? "Failed" : "Success")}
               </span>
               <span
                 style={{

@@ -27,6 +27,10 @@ APP_ALIASES: Dict[str, str] = {
     "task manager": "taskmgr",
     "taskmgr": "taskmgr",
     "paint": "mspaint",
+    "whatsapp": "whatsapp",
+    "spotify": "spotify",
+    "slack": "slack",
+    "discord": "discord",
 }
 
 def resolve_app_path(app_name: str) -> Optional[str]:
@@ -77,19 +81,49 @@ def resolve_app_path(app_name: str) -> Optional[str]:
     return target if shutil.which(target) else None
 
 def is_app_running(name: str) -> Dict[str, Any]:
-    """Check if an application or process matching name is currently running."""
+    """
+    Check if an application or process matching name is currently running.
+    Uses hybrid detection:
+    1. Direct process name inspection (psutil)
+    2. Open desktop windows & modern UWP app inspection (observation)
+    """
     clean = name.strip().lower()
     target_base = APP_ALIASES.get(clean, clean).replace(".exe", "")
 
     matching_processes = []
+    seen_pids = set()
+
+    # 1. Process name inspection
     for proc in psutil.process_iter(['pid', 'name']):
         try:
             p_name = proc.info['name'] or ""
             p_clean = p_name.lower().replace(".exe", "")
-            if target_base in p_clean or p_clean in target_base or clean in p_clean:
-                matching_processes.append({"pid": proc.info['pid'], "name": p_name})
+            if target_base == p_clean or p_clean in target_base or clean in p_clean:
+                if proc.info['pid'] not in seen_pids:
+                    seen_pids.add(proc.info['pid'])
+                    matching_processes.append({"pid": proc.info['pid'], "name": p_name})
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
+
+    # 2. Open desktop window & UWP application inspection (handles WhatsApp, packaged apps)
+    try:
+        from .observation import get_open_windows
+        windows = get_open_windows(include_invisible=False)
+        for w in windows:
+            w_title = w.get("title", "").lower()
+            w_app = w.get("app_name", "").lower()
+            w_proc = w.get("process_name", "").lower()
+            if clean in w_title or clean in w_app or clean in w_proc or target_base in w_title or target_base in w_app:
+                w_pid = w.get("pid", 0)
+                if w_pid not in seen_pids:
+                    seen_pids.add(w_pid)
+                    matching_processes.append({
+                        "pid": w_pid,
+                        "name": w.get("app_name") or w.get("process_name") or name,
+                        "title": w.get("title"),
+                    })
+    except Exception:
+        pass
 
     is_running = len(matching_processes) > 0
     return {
@@ -186,7 +220,7 @@ def launch_application(name: str, args: Optional[List[str]] = None) -> Dict[str,
             }
 
 def verify_app_launched(result: Dict[str, Any], arguments: Dict[str, Any]) -> Tuple[bool, str]:
-    """Verify that the launched application is running in process list."""
+    """Verify that the launched application is running in process or window list."""
     app_name = arguments.get("name", "")
     time.sleep(0.5)
     check = is_app_running(app_name)
@@ -195,20 +229,59 @@ def verify_app_launched(result: Dict[str, Any], arguments: Dict[str, Any]) -> Tu
     return False, f"Verification warning: '{app_name}' process not detected after launch."
 
 def close_application(name: str) -> Dict[str, Any]:
-    """Close running application gracefully by process name."""
+    """
+    Close running application gracefully using hybrid termination:
+    1. Terminate matching process(es) by process name/alias
+    2. If process-based termination is insufficient (e.g. UWP packaged apps like WhatsApp),
+       locate matching open windows and dispatch WM_CLOSE signals to terminate cleanly.
+    """
     clean = name.strip().lower()
     target_base = APP_ALIASES.get(clean, clean).replace(".exe", "")
 
     closed = 0
     errors = []
+
+    # 1. Process termination attempt
     for proc in psutil.process_iter(['pid', 'name']):
         try:
             p_name = (proc.info['name'] or "").lower().replace(".exe", "")
-            if target_base == p_clean_base(p_name):
+            if target_base == p_clean_base(p_name) or (clean in p_name and len(clean) > 3):
                 proc.terminate()
                 closed += 1
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
             errors.append(str(e))
+
+    # 2. Window-based termination fallback (for WhatsApp, Calculator, and modern UWP apps)
+    try:
+        from .observation import get_open_windows
+        import win32gui
+        windows = get_open_windows(include_invisible=False)
+        for w in windows:
+            w_title = w.get("title", "").lower()
+            w_app = w.get("app_name", "").lower()
+            w_proc = w.get("process_name", "").lower()
+            if (clean in w_title or clean in w_app or clean in w_proc or target_base in w_title) and w.get("hwnd"):
+                hwnd = w["hwnd"]
+                # WM_CLOSE = 0x0010
+                win32gui.PostMessage(hwnd, 0x0010, 0, 0)
+                closed += 1
+                w_pid = w.get("pid")
+                if w_pid:
+                    try:
+                        p = psutil.Process(w_pid)
+                        p.terminate()
+                    except Exception:
+                        pass
+    except Exception:
+        # Fallback to pygetwindow window close
+        try:
+            import pygetwindow as gw
+            for w in gw.getAllWindows():
+                if clean in w.title.lower() or target_base in w.title.lower():
+                    w.close()
+                    closed += 1
+        except Exception:
+            pass
 
     if closed > 0:
         return {"success": True, "app": name, "closed_count": closed, "message": f"Terminated {closed} instance(s) of '{name}'."}
@@ -227,14 +300,34 @@ def verify_app_closed(result: Dict[str, Any], arguments: Dict[str, Any]) -> Tupl
     return False, f"Verification failed: '{app_name}' processes still active."
 
 def focus_application(name: str) -> Dict[str, Any]:
-    """Focus / activate window of application."""
+    """Focus / activate window of application using hybrid window inspection."""
     clean = name.strip().lower()
+    target_base = APP_ALIASES.get(clean, clean).replace(".exe", "")
+
+    # Layer 1: Check observation layer open windows
+    try:
+        from .observation import get_open_windows
+        import win32gui
+        windows = get_open_windows(include_invisible=False)
+        for w in windows:
+            w_title = w.get("title", "").lower()
+            w_app = w.get("app_name", "").lower()
+            if (clean in w_title or clean in w_app or target_base in w_title) and w.get("hwnd"):
+                hwnd = w["hwnd"]
+                if win32gui.IsIconic(hwnd):
+                    win32gui.ShowWindow(hwnd, 9)  # SW_RESTORE = 9
+                win32gui.SetForegroundWindow(hwnd)
+                return {"success": True, "app": name, "window_title": w.get("title"), "message": f"Focused window '{w.get('title')}'."}
+    except Exception:
+        pass
+
+    # Layer 2: pygetwindow fallback
     try:
         import pygetwindow as gw
         all_windows = gw.getAllWindows()
         matched = None
         for w in all_windows:
-            if clean in w.title.lower():
+            if clean in w.title.lower() or target_base in w.title.lower():
                 matched = w
                 break
         if matched:
@@ -244,6 +337,7 @@ def focus_application(name: str) -> Dict[str, Any]:
         pass
 
     return {"success": True, "app": name, "message": f"Focus signal sent for '{name}'."}
+
 
 # Register Application Control Tools
 def register_app_tools():

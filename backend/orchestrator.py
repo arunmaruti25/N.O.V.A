@@ -1,4 +1,5 @@
 import re
+import time
 from typing import Dict, Any, Optional, List, Tuple, Callable
 from .config import settings
 from .permissions import evaluate_permission, evaluate_tool_permission, PermissionLevel, PermissionCheckResult
@@ -6,11 +7,15 @@ from .router import route_inference, ModelProvider
 from .tools.registry import tool_registry, ToolResult
 from .tools.planner import (
     plan_task_from_natural_language,
+    plan_task_from_goal,
+    generate_recovery_plan,
     parse_llm_tool_calls,
     classify_task_control_intent,
     build_tool_system_prompt,
 )
 from .task_manager import task_manager, TaskContext, TaskStatus
+from .task_understanding import understand_user_goal, IntentType, UserGoal, SuccessCondition
+from .tools.observation import get_computer_state, ComputerState
 from .tools.computer import (
     get_system_info,
     get_system_volume,
@@ -26,11 +31,12 @@ from .voice import synthesize
 
 def select_model_by_intent(text: str, preferred_model: Optional[str] = None) -> str:
     """
-    Intelligently route requests based on semantic intent:
-    - Coding -> NVIDIA
-    - Complex reasoning -> Gemini
+    Intelligently route requests based on semantic intent (Phase F):
+    - Vision / Multimodal / Screen / UI -> Gemini
+    - Complex multi-step reasoning / workflows -> Gemini
+    - Coding / scripts -> NVIDIA NIM
     - Private / offline -> Ollama
-    - Simple / fast conversation -> Groq
+    - Quick commands / simple actions -> Groq (ultra-low latency)
     """
     lower = text.lower()
 
@@ -38,7 +44,15 @@ def select_model_by_intent(text: str, preferred_model: Optional[str] = None) -> 
     if any(k in lower for k in ["offline", "local", "private", "on-device", "locally", "ollama", "disconnected"]):
         return ModelProvider.OLLAMA
 
-    # 2. Coding requests
+    # 2. Multimodal / Vision / Screen understanding requests -> Gemini
+    multimodal_keywords = [
+        "screen", "look at my screen", "what is on my screen", "screenshot", "vision",
+        "see", "ui", "element", "button", "visual", "inspect screen", "viewfinder"
+    ]
+    if any(k in lower for k in multimodal_keywords):
+        return ModelProvider.GEMINI
+
+    # 3. Coding requests -> NVIDIA
     coding_keywords = [
         "code", "coding", "python", "javascript", "typescript", "react", "html", "css",
         "function", "script", "algorithm", "debug", "refactor", "class", "program",
@@ -48,20 +62,21 @@ def select_model_by_intent(text: str, preferred_model: Optional[str] = None) -> 
     if any(k in lower for k in coding_keywords):
         return ModelProvider.NVIDIA
 
-    # 3. Complex reasoning requests
+    # 4. Complex reasoning / multi-step workflow requests -> Gemini
     reasoning_keywords = [
         "why", "analyze", "analysis", "reason", "explain in detail", "compare",
         "evaluate", "break down", "philosophy", "complex", "strategy", "architecture",
-        "step by step", "deep think", "ponder", "pros and cons", "implications"
+        "step by step", "deep think", "ponder", "pros and cons", "implications",
+        "and then", "after that", "workflow"
     ]
     if any(k in lower for k in reasoning_keywords) or len(text.split()) >= 16:
         return ModelProvider.GEMINI
 
-    # 4. If explicit model requested by client
+    # 5. If explicit model requested by client
     if preferred_model and preferred_model.strip().lower() in ["gemini", "nvidia", "ollama", "groq"]:
         return preferred_model.strip().title()
 
-    # 5. Simple / fast conversation default -> Groq
+    # 6. Simple / fast conversation & quick actions default -> Groq
     return ModelProvider.GROQ
 
 async def execute_task_context(
@@ -214,8 +229,14 @@ async def execute_task_context(
             pre_authorized=is_pre_authorized,
         )
 
+        if task.task_id not in task_manager.tasks:
+            task_manager.tasks[task.task_id] = task
+
         task_manager.mark_step_completed(task.task_id, i, step, res.to_dict())
         executed_results.append(res.to_dict())
+
+        # Post-execution Observe: Capture fresh ComputerState
+        post_state = get_computer_state(include_screenshot=False, include_ui_elements=False)
 
         # Emit VERIFYING state and Activity Log
         if on_task_event:
@@ -237,7 +258,59 @@ async def execute_task_context(
                 },
             )
 
+        # Dynamic Semantic Goal Verification (Phase D)
+        if task.success_condition:
+            ver = task.success_condition.verify(post_state, res.to_dict())
+            task.verification_history.append({
+                "step": i,
+                "tool": tool_name,
+                "satisfied": ver.satisfied,
+                "reason": ver.reason,
+                "timestamp": time.time(),
+            })
+            if ver.satisfied:
+                final_text = ver.reason or (res.result.get("message") if isinstance(res.result, dict) else f"Goal verified: {task.original_request}")
+                task.status = TaskStatus.COMPLETED
+                task_manager.mark_task_completed(task.task_id, {"response": final_text, "verified": True})
+                if on_task_event:
+                    await on_task_event(
+                        "TASK_COMPLETED",
+                        {
+                            "task_id": task.task_id,
+                            "status": "COMPLETED",
+                            "current_step": i + 1,
+                            "total_steps": len(task.plan),
+                            "description": final_text,
+                            "verified": True,
+                        },
+                    )
+                tts_res = await synthesize(final_text, output_filename="response.mp3")
+                return {
+                    "status": "SUCCESS",
+                    "action": tool_name,
+                    "task_id": task.task_id,
+                    "response": final_text,
+                    "tool_output": res.to_dict(),
+                    "verified": True,
+                    "audio_path": tts_res.get("file_path", "") if tts_res.get("success") else "",
+                }
+
+        # Dynamic Recovery & Replanning (Phase E)
         if not res.success:
+            if task.recovery_attempts < task.max_recovery_attempts:
+                rec_plan = generate_recovery_plan(task, post_state, res.to_dict())
+                if rec_plan:
+                    task.recovery_attempts += 1
+                    for r_idx, r_step in enumerate(rec_plan):
+                        task.plan.insert(task.current_step + r_idx, r_step)
+                    task.pending_steps = task.plan[task.current_step:]
+                    if on_task_event:
+                        await on_task_event(
+                            "STATE_CHANGE",
+                            {"status": "RECOVERING", "detail": f"Attempting recovery: {rec_plan[0].get('thought') or rec_plan[0].get('tool')}"},
+                        )
+                    continue
+
             err_msg = res.error or "Action verification failed."
             task.status = TaskStatus.FAILED
             if on_task_event:
@@ -496,6 +569,22 @@ async def orchestrate_task(
     ]
     is_refusal = any(m in assistant_text.lower() for m in refusal_markers)
 
+    # Analyze natural-language goal and machine-verifiable success conditions (Phase B)
+    user_goal = understand_user_goal(text)
+
+    # If the goal is ambiguous, ask the user for clarification directly
+    if user_goal.intent_type == IntentType.AMBIGUOUS:
+        clarify_text = user_goal.clarification_prompt or "Could you please provide more details on your request?"
+        tts_result = await synthesize(clarify_text, output_filename="response.mp3")
+        return {
+            "status": "SUCCESS",
+            "action": "clarification",
+            "model_used": "GoalUnderstanding",
+            "response": clarify_text,
+            "tool_output": None,
+            "audio_path": tts_result.get("file_path", "") if tts_result.get("success") else "",
+        }
+
     # If the model appropriately asked clarification for an ambiguous request
     is_clarification = any(k in assistant_text.lower() for k in ["which video", "what video", "which song", "what song", "which one would you like", "which specific"])
     if is_clarification and not llm_tool_calls:
@@ -510,14 +599,20 @@ async def orchestrate_task(
         }
 
     if not llm_tool_calls:
-        # Check if natural language planner recognizes this as an actionable intent
-        fallback_plan = plan_task_from_natural_language(text)
+        # State-aware semantic planner: inspects current ComputerState (Phase C)
+        current_state = get_computer_state(include_screenshot=False, include_ui_elements=False)
+        fallback_plan = plan_task_from_goal(user_goal, current_state)
         if fallback_plan:
             llm_tool_calls = fallback_plan
 
     if llm_tool_calls:
-        # Multi-Turn AI Tool Execution Loop
-        task = task_manager.create_task(text, llm_tool_calls)
+        # Multi-Turn AI Tool Execution Loop with State & Verification (Phase D & E)
+        task = task_manager.create_task(
+            text,
+            llm_tool_calls,
+            goal=user_goal,
+            success_condition=user_goal.success_condition,
+        )
         if on_task_event:
             await on_task_event(
                 "TASK_CREATED",
@@ -533,41 +628,9 @@ async def orchestrate_task(
         if exec_res.get("status") in ["CONFIRMATION_REQUIRED", "ERROR", "PAUSED", "CANCELLED"]:
             return exec_res
 
-        # Check if user's intent is PLAY and playback has not yet been verified
-        requires_playback = (
-            lower.startswith("play ")
-            or " play " in lower
-            or "play song" in lower
-            or "play the song" in lower
-        ) and not any(k in lower for k in ["playlist", "playwright", "player info", "how to play", "what is", "play pause"])
-
-        if requires_playback:
-            executed_tools = [s.get("step", {}).get("tool") or s.get("tool") for s in task.completed_steps]
-            if "browser.play_media" not in executed_tools and "browser.verify_playback" not in executed_tools:
-                # User asked to play media, but so far only search or open occurred
-                clean_q = re.sub(r'^(?:play\s+(?:the\s+)?(?:song\s+|video\s+of\s+|video\s+|track\s+)?)', '', text, flags=re.IGNORECASE)
-                clean_q = re.sub(r'\s+on\s+youtube\s*$', '', clean_q, flags=re.IGNORECASE).strip()
-                criteria = "first" if any(k in lower for k in ["first", "1st", "top"]) else "best_match"
-
-                select_step = {
-                    "tool": "browser.select_result",
-                    "arguments": {"query": clean_q, "platform": "youtube", "criteria": criteria},
-                    "thought": f"Select and open best result for '{clean_q}' on YouTube",
-                }
-                verify_step = {
-                    "tool": "browser.verify_playback",
-                    "arguments": {"expected_title": clean_q},
-                    "thought": f"Verify active playback of '{clean_q}'",
-                }
-                task.plan.extend([select_step, verify_step])
-                task.pending_steps.extend([select_step, verify_step])
-                exec_res = await execute_task_context(task, confirmed_action=confirmed_action, on_task_event=on_task_event)
-                if exec_res.get("status") in ["CONFIRMATION_REQUIRED", "ERROR", "PAUSED", "CANCELLED"]:
-                    return exec_res
-
-        # If it was a completed action without chained conjunctions, return directly
+        # If it was a verified action or completed plan without chained conjunctions, return directly
         has_chained = any(c in text.lower() for c in [" and ", " then ", " after that ", " next "])
-        if not has_chained and task.current_step >= len(task.plan):
+        if not has_chained and (exec_res.get("verified") or task.current_step >= len(task.plan)):
             return exec_res
 
         # Tool result -> Model feedback loop (multi-turn reasoning for compound tasks)

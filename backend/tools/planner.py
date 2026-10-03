@@ -55,6 +55,8 @@ def normalize_tool_name(name: str) -> Optional[str]:
         "set_volume": "system.set_volume",
         "observe": "computer.observe",
         "observe_screen": "computer.observe",
+        "get_computer_state": "computer.get_state",
+        "get_state": "computer.get_state",
         "locate": "computer.locate",
         "locate_element": "computer.locate",
         "interact": "computer.interact",
@@ -519,5 +521,208 @@ def classify_task_control_intent(text: str) -> Optional[Dict[str, Any]]:
         return {"action": "CANCEL", "target": target}
 
     return None
+
+
+def plan_task_from_goal(goal: Any, current_state: Optional[Any] = None) -> List[Dict[str, Any]]:
+    """
+    State-aware task planning: inspects current ComputerState before selecting actions.
+    Emits atomic actions targeted at fulfilling the goal's SuccessCondition.
+    """
+    category = getattr(goal, "goal_category", "")
+    target = getattr(goal, "target", "")
+    entities = getattr(goal, "entities", {})
+
+    # 1. Media Playback (YouTube, etc.)
+    if category == "media_playback":
+        query = entities.get("query", target)
+        platform = entities.get("platform", "youtube")
+        return [
+            {
+                "tool": "browser.play_media",
+                "arguments": {"query": query, "platform": platform, "criteria": "first"},
+                "thought": f"Search, select, and verify active playback for '{query}' on {platform}",
+            }
+        ]
+
+    # 2. Messaging (WhatsApp, etc.)
+    if category == "messaging":
+        app_name = entities.get("app", "whatsapp")
+        recipient = entities.get("recipient", "contact")
+        message = entities.get("message", "Hello")
+
+        steps = []
+        is_already_open = False
+        if current_state:
+            open_wins = getattr(current_state, "open_windows", [])
+            for w in open_wins:
+                title = (getattr(w, "title", "") or "").lower()
+                pname = (getattr(w, "process_name", "") or "").lower()
+                app_n = (getattr(w, "app_name", "") or "").lower()
+                if "whatsapp" in title or "whatsapp" in pname or "whatsapp" in app_n:
+                    is_already_open = True
+                    break
+
+        if not is_already_open:
+            steps.append({
+                "tool": "app.launch",
+                "arguments": {"name": app_name},
+                "thought": f"Launch {app_name}",
+            })
+        else:
+            steps.append({
+                "tool": "app.focus",
+                "arguments": {"name": app_name},
+                "thought": f"Switch focus to {app_name}",
+            })
+
+        steps.extend([
+            {
+                "tool": "computer.interact",
+                "arguments": {
+                    "action": "locate_and_click",
+                    "target_description": "Search or start a new chat",
+                },
+                "thought": f"Locate search field to find {recipient}",
+            },
+            {
+                "tool": "keyboard.type",
+                "arguments": {"text": recipient},
+                "thought": f"Type recipient name '{recipient}'",
+            },
+            {
+                "tool": "keyboard.press",
+                "arguments": {"key": "enter"},
+                "thought": "Open conversation with recipient",
+            },
+            {
+                "tool": "keyboard.type",
+                "arguments": {"text": message},
+                "thought": f"Type message '{message}'",
+            },
+            {
+                "tool": "keyboard.press",
+                "arguments": {"key": "enter"},
+                "thought": "Send message",
+            },
+        ])
+        return steps
+
+    # 3. Application Lifecycle (Close, Open, Focus)
+    if category == "app_lifecycle":
+        app_name = entities.get("app_name", target)
+        condition = getattr(goal, "success_condition", None)
+        c_type = getattr(condition, "type", "") if condition else ""
+        if c_type == "app_closed":
+            return [
+                {
+                    "tool": "app.close",
+                    "arguments": {"name": app_name},
+                    "thought": f"Close {app_name}",
+                }
+            ]
+        elif c_type in ["app_running", "app_focused"]:
+            if current_state and getattr(current_state, "active_window", None):
+                act = current_state.active_window
+                t_lower = app_name.lower()
+                if t_lower in act.title.lower() or t_lower in act.process_name.lower() or t_lower in act.app_name.lower():
+                    return []
+            return [
+                {
+                    "tool": "app.launch",
+                    "arguments": {"name": app_name},
+                    "thought": f"Launch {app_name}",
+                }
+            ]
+
+    # 4. Browser Tab Management (Close Tab)
+    if category == "browser_tab_management":
+        title_match = entities.get("title_match", target)
+        return [
+            {
+                "tool": "browser.close_tab",
+                "arguments": {"title_match": title_match},
+                "thought": f"Close tab matching '{title_match}'",
+            }
+        ]
+
+    # 5. Fallback to natural language planner
+    raw = getattr(goal, "raw_prompt", "")
+    return plan_task_from_natural_language(raw) or []
+
+
+def generate_recovery_plan(task: Any, state: Any, last_res: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    """
+    Phase E: Dynamic replanning and recovery when execution is interrupted or verification fails.
+    Compares observed ComputerState with expected goal state and generates corrective actions.
+    """
+    if not task:
+        return None
+
+    rec_attempts = getattr(task, "recovery_attempts", 0)
+    max_rec = getattr(task, "max_recovery_attempts", 3)
+    if rec_attempts >= max_rec:
+        return None
+
+    condition = getattr(task, "success_condition", None)
+    cond_type = getattr(condition, "type", "") if condition else ""
+    target = getattr(condition, "target", "") if condition else ""
+
+    # Recovery 1: Application failed to close via psutil (e.g. UWP app inside ApplicationFrameHost)
+    if cond_type in ["app_closed", "window_closed"]:
+        target_lower = target.lower()
+        open_windows = getattr(state, "open_windows", [])
+        for w in open_windows:
+            w_title = getattr(w, "title", "")
+            w_proc = getattr(w, "process_name", "")
+            w_app = getattr(w, "app_name", "")
+            if target_lower in w_title.lower() or target_lower in w_proc.lower() or target_lower in w_app.lower():
+                return [
+                    {
+                        "tool": "window.close",
+                        "arguments": {"title": w_title},
+                        "thought": f"Recovery: Close window '{w_title}' directly via OS window manager",
+                    }
+                ]
+
+    # Recovery 2: Media playback did not start (e.g. YouTube Ad, consent modal, or player paused)
+    if cond_type in ["playback_active", "media_playing"]:
+        ui_elems = getattr(state, "ui_elements", [])
+        for elem in ui_elems:
+            el_name = (getattr(elem, "name", "") or "").lower()
+            if "skip ad" in el_name or "skip ads" in el_name:
+                return [
+                    {
+                        "tool": "computer.interact",
+                        "arguments": {"action": "locate_and_click", "target_description": "Skip Ad"},
+                        "thought": "Recovery: Skip video advertisement",
+                    },
+                    {
+                        "tool": "keyboard.press",
+                        "arguments": {"key": "space"},
+                        "thought": "Recovery: Resume video playback",
+                    }
+                ]
+
+        return [
+            {
+                "tool": "keyboard.press",
+                "arguments": {"key": "space"},
+                "thought": "Recovery: Toggle play/pause hotkey to initiate playback",
+            }
+        ]
+
+    # Recovery 3: Target UI element could not be located
+    if not last_res.get("success") and "locate" in str(last_res):
+        if target:
+            return [
+                {
+                    "tool": "app.focus",
+                    "arguments": {"name": target},
+                    "thought": f"Recovery: Re-focus {target} before re-attempting UI interaction",
+                }
+            ]
+
+    return None
+
 
 

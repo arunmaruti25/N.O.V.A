@@ -26,6 +26,11 @@ class TaskContext:
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     completed_at: Optional[str] = None
     last_result: Optional[Dict[str, Any]] = None
+    goal: Optional[Any] = None
+    success_condition: Optional[Any] = None
+    verification_history: List[Dict[str, Any]] = field(default_factory=list)
+    recovery_attempts: int = 0
+    max_recovery_attempts: int = 3
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -42,6 +47,10 @@ class TaskContext:
             "updated_at": self.updated_at,
             "completed_at": self.completed_at,
             "last_result": self.last_result,
+            "goal": self.goal.to_dict() if hasattr(self.goal, "to_dict") else self.goal,
+            "success_condition": self.success_condition.to_dict() if hasattr(self.success_condition, "to_dict") else self.success_condition,
+            "verification_history": self.verification_history,
+            "recovery_attempts": self.recovery_attempts,
         }
 
 class TaskManager:
@@ -61,8 +70,14 @@ class TaskManager:
         self._pause_requested: bool = False
         self._cancel_requested: bool = False
 
-    def create_task(self, request: str, plan: List[Dict[str, Any]]) -> TaskContext:
-        """Create and register a new multi-step computer task context."""
+    def create_task(
+        self,
+        request: str,
+        plan: List[Dict[str, Any]],
+        goal: Optional[Any] = None,
+        success_condition: Optional[Any] = None,
+    ) -> TaskContext:
+        """Create and register a new multi-step computer task context with goal & verification."""
         task_id = f"task_{uuid.uuid4().hex[:8]}"
         ctx = TaskContext(
             task_id=task_id,
@@ -72,6 +87,8 @@ class TaskManager:
             completed_steps=[],
             pending_steps=list(plan),
             status=TaskStatus.RUNNING,
+            goal=goal,
+            success_condition=success_condition,
         )
         self.tasks[task_id] = ctx
         self.task_history.append(task_id)

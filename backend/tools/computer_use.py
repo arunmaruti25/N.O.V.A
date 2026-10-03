@@ -246,7 +246,22 @@ def register_computer_use_tools():
     tool_registry.register(ToolDefinition(
         name="computer.observe",
         category="computer_use",
-        description="Observe current computer state: screen resolution, cursor coordinates, active application, foreground window, visible windows, and interactive UI controls.",
+        description="Observe current computer state: screen resolution, cursor coordinates, active application, foreground window, open windows, visible applications, focused element, and interactive UI controls.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "include_screenshot": {"type": "boolean", "description": "Whether to capture screen preview"},
+                "include_ui_elements": {"type": "boolean", "description": "Whether to parse accessible UI automation tree"},
+            },
+        },
+        permission_level=PermissionLevel.SAFE,
+        execute_fn=observe_computer_tool,
+    ))
+
+    tool_registry.register(ToolDefinition(
+        name="computer.get_state",
+        category="computer_use",
+        description="Retrieve normalized, unified ComputerState: active window, open windows, visible apps, UI elements, focused element, and mouse position.",
         parameters={
             "type": "object",
             "properties": {
