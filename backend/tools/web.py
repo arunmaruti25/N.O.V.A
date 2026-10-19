@@ -22,7 +22,7 @@ class DuckDuckGoProvider(BaseSearchProvider):
                     })
                 return formatted
         except Exception as e:
-            return MockSearchProvider().search(query, max_results)
+            raise RuntimeError(f"Web search unavailable: {e}") from e
 
 class MockSearchProvider(BaseSearchProvider):
     def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
@@ -51,7 +51,7 @@ def web_search(query: str, max_results: int = 5) -> Dict[str, Any]:
             "query": clean_query,
             "count": len(results),
             "results": results,
-            "summary": f"Found {len(results)} verified web sources for '{clean_query}'.",
+            "summary": f"Found {len(results)} search results for '{clean_query}'.",
         }
     except Exception as e:
         return {

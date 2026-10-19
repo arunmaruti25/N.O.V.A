@@ -28,7 +28,7 @@ export default function VoiceBar() {
   const [inputVal, setInputVal] = useState("");
 
   const handleMicClick = () => {
-    if (status === NOVA_STATES.IDLE) {
+    if ([NOVA_STATES.IDLE, NOVA_STATES.ERROR, NOVA_STATES.OFFLINE, NOVA_STATES.SUCCESS].includes(status)) {
       triggerVoiceCommand();
     } else {
       cancelOperation();

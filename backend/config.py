@@ -17,7 +17,13 @@ class Settings:
     BACKEND_HOST: str = os.getenv("BACKEND_HOST", "127.0.0.1")
     BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
-    DATA_DIR: Path = BASE_DIR / "data"
+    DATA_DIR: Path = Path(os.getenv("NOVA_DATA_DIR", str(BASE_DIR / "data")))
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+    MODEL_TIMEOUT_SECONDS: float = float(os.getenv("MODEL_TIMEOUT_SECONDS", "20"))
+    ALLOWED_ORIGINS: list[str] = os.getenv("NOVA_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000").split(",")
 
     # Voice Turn-Taking & Continuation Configuration
     VOICE_SILENCE_THRESHOLD_SECONDS: float = float(os.getenv("VOICE_SILENCE_THRESHOLD_SECONDS", "2.0"))

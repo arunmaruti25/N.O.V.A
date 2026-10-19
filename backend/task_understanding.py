@@ -131,18 +131,23 @@ class SuccessCondition:
         # 3. PLAYBACK_ACTIVE / MEDIA_PLAYING
         elif self.type in ["playback_active", "media_playing"]:
             # Check last tool output if it was browser.verify_playback or browser.play_media
-            if last_res.get("verified") is True:
+            if last_res.get("tool") in {"browser.play_media", "browser.verify_playback"} and (last_res.get("verified") is True or last_res.get("result", {}).get("verified") is True):
+                tool_res = last_res.get("result") if isinstance(last_res.get("result"), dict) else last_res
+                msg = tool_res.get("message") or last_res.get("message")
+                title = tool_res.get("title") or self.expected_state.get("query") or self.target
+                reason_txt = msg or f"Now playing '{title}' with verified playback."
                 return VerificationResult(
                     satisfied=True,
-                    reason="Media playback verified active by browser engine.",
+                    reason=reason_txt,
                 )
             
             # Check browser state in computer observation
             b_state = state.browser_state or {}
             if b_state.get("playback_verified") or b_state.get("is_playing"):
+                title = self.expected_state.get("query") or self.target
                 return VerificationResult(
                     satisfied=True,
-                    reason="Browser state indicates active media playback.",
+                    reason=f"Now playing '{title}' (verified by browser state).",
                 )
 
             # Check active window title for media play markers or requested query
@@ -151,9 +156,10 @@ class SuccessCondition:
             if "youtube" in active_title and (not song_query or song_query in active_title):
                 # If YouTube is active and on the video page
                 if last_res.get("success") and ("play" in last_res.get("action", "") or "verify" in last_res.get("action", "")):
+                    title = self.expected_state.get("query") or self.target
                     return VerificationResult(
                         satisfied=True,
-                        reason="YouTube video player page is active and playback action completed.",
+                        reason=f"Now playing '{title}' on YouTube.",
                     )
 
             return VerificationResult(
@@ -165,8 +171,7 @@ class SuccessCondition:
         # 4. TAB_CLOSED
         elif self.type == "tab_closed":
             # Target tab title shouldn't be the active title or in browser tabs
-            active_title = (state.active_window.title or "").lower() if state.active_window else ""
-            if target_lower not in active_title:
+            if last_res.get("tool") == "browser.close_tab" and last_res.get("result", {}).get("tab_closed") is True:
                 return VerificationResult(
                     satisfied=True,
                     reason=f"Tab matching '{self.target}' is closed.",
@@ -179,24 +184,33 @@ class SuccessCondition:
 
         # 5. UI_ELEMENT_EXISTS / TEXT_ENTERED / MESSAGE_SENT
         elif self.type in ["message_sent", "ui_text_present"]:
-            # Check tool result
-            if last_res.get("verified") or (last_res.get("success") and "sent" in str(last_res)):
-                return VerificationResult(
-                    satisfied=True,
-                    reason="Message dispatch confirmed by tool execution.",
-                )
+            result = last_res.get("result") or {}
+            proven = isinstance(result, dict) and result.get(self.type) is True
             return VerificationResult(
-                satisfied=last_res.get("success", False),
-                reason=last_res.get("message", "Action completed."),
+                satisfied=proven,
+                reason="Message delivery observed." if proven else "Message delivery has not been verified.",
             )
 
-        # 6. DEFAULT / GENERIC TOOL SUCCESS
-        if last_res.get("verified") is True or (last_res.get("success") and not self.type):
-            return VerificationResult(satisfied=True, reason="Execution verified successfully.")
+        # 6. SYSTEM_QUERIED
+        elif self.type == "system_queried":
+            msg = (last_res.get("result", {}).get("message") if isinstance(last_res.get("result"), dict) else None) or last_res.get("message")
+            return VerificationResult(
+                satisfied=last_res.get("success", True),
+                reason=msg or f"System status retrieved for {self.target}.",
+            )
 
+        # 7. DEFAULT / GENERIC TOOL SUCCESS
+        if last_res.get("verified") is True or (last_res.get("success") and not self.type):
+            msg = (last_res.get("result", {}).get("message") if isinstance(last_res.get("result"), dict) else None) or last_res.get("message")
+            return VerificationResult(
+                satisfied=True,
+                reason=msg or "Execution verified successfully."
+            )
+
+        msg = (last_res.get("result", {}).get("message") if isinstance(last_res.get("result"), dict) else None) or last_res.get("error") or last_res.get("message")
         return VerificationResult(
             satisfied=last_res.get("success", False),
-            reason=last_res.get("error") or last_res.get("message") or "Verified tool outcome.",
+            reason=msg or "Verified tool outcome.",
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -403,7 +417,7 @@ def understand_user_goal(user_prompt: str, current_state: Optional[ComputerState
         text,
         re.IGNORECASE
     )
-    if "whatsapp" in lower or msg_match:
+    if msg_match or ("whatsapp" in lower and re.search(r"\b(send|message|text)\b", lower)):
         # Extract recipient and message
         recipient = "contact"
         content = "Hello"

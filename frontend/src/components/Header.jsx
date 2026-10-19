@@ -22,6 +22,7 @@ export default function Header() {
     setIsMiniMode,
     notifications,
     setCurrentView,
+    isBackendConnected,
   } = useNova();
 
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
@@ -88,7 +89,7 @@ export default function Header() {
             fontFamily: "var(--font-mono)",
           }}
         >
-          v2.4 NEURAL
+          v3.0
         </span>
       </div>
 
@@ -356,8 +357,8 @@ export default function Header() {
             fontFamily: "var(--font-mono)",
           }}
         >
-          <Wifi size={13} color="var(--color-state-success)" />
-          <span>CONNECTED</span>
+          <Wifi size={13} color={isBackendConnected ? "var(--color-state-success)" : "var(--color-state-error)"} />
+          <span>{isBackendConnected ? "CONNECTED" : "OFFLINE"}</span>
         </div>
 
         {/* Notifications Icon */}

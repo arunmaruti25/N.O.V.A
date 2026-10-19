@@ -405,7 +405,9 @@ def get_open_windows(include_invisible: bool = False, limit: int = 40) -> List[D
 
         def enum_handler(hwnd, extra):
             is_vis = win32gui.IsWindowVisible(hwnd) != 0
-            if not is_vis and not include_invisible:
+            is_min = win32gui.IsIconic(hwnd) != 0
+            # Minimized windows on the Windows taskbar are valid open windows even if IsWindowVisible is False
+            if not is_vis and not is_min and not include_invisible:
                 return
 
             title = win32gui.GetWindowText(hwnd).strip()
@@ -415,7 +417,6 @@ def get_open_windows(include_invisible: bool = False, limit: int = 40) -> List[D
 
             l, t, r, b = win32gui.GetWindowRect(hwnd)
             w, h = r - l, b - t
-            is_min = win32gui.IsIconic(hwnd) != 0
             is_max = win32gui.IsZoomed(hwnd) != 0
 
             # Only include windows with reasonable dimensions or minimized state

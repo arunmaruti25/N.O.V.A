@@ -6,6 +6,7 @@ DB_PATH = settings.DATA_DIR / "nova_memory.db"
 
 async def init_db() -> None:
     """Initialize local SQLite memory database."""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS memories (

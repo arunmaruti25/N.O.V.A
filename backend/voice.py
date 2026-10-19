@@ -3,6 +3,7 @@ import sys
 import asyncio
 import io
 import time
+import uuid
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Callable, List, Tuple
@@ -39,7 +40,12 @@ class FishSpeechTTSProvider(BaseTTSProvider):
     """
     Primary TTS Provider: Fish Speech S2 / S2 Pro.
     Supports local self-hosted Fish Speech API server or Fish Audio cloud API.
+    Includes smart failover cooldown to prevent request hangs when API credit is depleted.
     """
+
+    def __init__(self):
+        self._disabled_until: float = 0.0
+        self._last_error: str = ""
 
     @property
     def name(self) -> str:
@@ -49,6 +55,15 @@ class FishSpeechTTSProvider(BaseTTSProvider):
         clean_text = text.strip()
         if not clean_text:
             return {"success": False, "error": "Empty text provided.", "engine": self.name}
+
+        # Check if temporarily bypassed due to depleted credits or prior failures
+        if time.time() < self._disabled_until:
+            return {
+                "success": False,
+                "error": f"Fish Speech cloud API temporarily bypassed (credit/network cooldown): {self._last_error}",
+                "engine": self.name,
+                "bypassed": True,
+            }
 
         api_url = settings.FISH_SPEECH_API_URL.strip() or "https://api.fish.audio/v1/tts"
         api_key = settings.FISH_SPEECH_API_KEY.strip()
@@ -75,7 +90,7 @@ class FishSpeechTTSProvider(BaseTTSProvider):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=3.5) as client:
                 response = await client.post(api_url, json=payload, headers=headers)
                 if response.status_code == 200:
                     output_path.write_bytes(response.content)
@@ -86,30 +101,42 @@ class FishSpeechTTSProvider(BaseTTSProvider):
                         "file_path": str(output_path),
                         "bytes": len(response.content),
                     }
-                elif response.status_code == 401:
+                elif response.status_code in [401, 402]:
+                    err_msg = "Fish Speech API authentication failed (HTTP 401 Unauthorized)." if response.status_code == 401 else "Fish Speech API insufficient credits (HTTP 402)."
+                    self._disabled_until = time.time() + 300.0  # 5 min cooldown
+                    self._last_error = err_msg
                     return {
                         "success": False,
-                        "error": "Fish Speech API authentication failed (HTTP 401 Unauthorized). Please check your FISH_SPEECH_API_KEY.",
+                        "error": err_msg,
                         "engine": self.name,
-                        "status_code": 401,
+                        "status_code": response.status_code,
                     }
                 else:
+                    err_msg = f"Fish Speech API returned HTTP {response.status_code}: {response.text[:150]}"
+                    self._disabled_until = time.time() + 60.0
+                    self._last_error = err_msg
                     return {
                         "success": False,
-                        "error": f"Fish Speech API returned HTTP {response.status_code}: {response.text[:150]}",
+                        "error": err_msg,
                         "engine": self.name,
                         "status_code": response.status_code,
                     }
         except httpx.ConnectError:
+            err_msg = f"Unable to connect to Fish Speech server at {api_url}."
+            self._disabled_until = time.time() + 60.0
+            self._last_error = err_msg
             return {
                 "success": False,
-                "error": f"Unable to connect to Fish Speech server at {api_url}. Verify the server is running or configure FISH_SPEECH_API_KEY for cloud access.",
+                "error": err_msg,
                 "engine": self.name,
             }
         except Exception as e:
+            err_msg = f"Fish Speech synthesis error: {str(e)}"
+            self._disabled_until = time.time() + 60.0
+            self._last_error = err_msg
             return {
                 "success": False,
-                "error": f"Fish Speech synthesis error: {str(e)}",
+                "error": err_msg,
                 "engine": self.name,
             }
 
@@ -174,7 +201,10 @@ class TTSManager:
         Synthesize response using primary Fish Speech S2 engine.
         Falls back to secondary engine if primary is unconfigured or offline.
         """
-        target_path = AUDIO_CACHE_DIR / output_filename
+        from .privacy import private_mode
+        if private_mode.get():
+            return {"success": False, "disabled": True, "error": "Cloud speech is disabled in local mode."}
+        target_path = AUDIO_CACHE_DIR / f"{uuid.uuid4().hex}-{Path(output_filename).name}"
 
         # 1. Attempt Primary: Fish Speech S2 / S2 Pro
         res = await self.primary_engine.synthesize(text, target_path)
@@ -476,3 +506,202 @@ def listen(timeout: int = 5, phrase_time_limit: int = 8) -> Dict[str, Any]:
         return loop.run_until_complete(voice_input_manager.listen_and_recognize(max_duration=phrase_time_limit))
     finally:
         loop.close()
+
+
+# ─────────────────────────────────────────────────────────────
+# 3. SIRI-LIKE VOICE ASSISTANT LIFECYCLE
+# "Hey NOVA" → listen → execute → speak → follow-up conversation → standby
+# ─────────────────────────────────────────────────────────────
+
+from enum import Enum
+
+class VoiceAssistantState(str, Enum):
+    STANDBY = "STANDBY"                     # Passive wake-word listening
+    WAKE_DETECTED = "WAKE_DETECTED"         # "Hey NOVA" recognized
+    LISTENING = "LISTENING"                 # Actively capturing user speech
+    PROCESSING = "PROCESSING"               # Parsing semantic intent
+    THINKING = "THINKING"                   # Formulating execution plan
+    EXECUTING = "EXECUTING"                 # Executing computer actions
+    SPEAKING = "SPEAKING"                   # Speaking response via TTS
+    FOLLOW_UP = "FOLLOW_UP"                 # Follow-up conversational window (4-5s)
+    IDLE = "IDLE"                           # Idle state
+    INTERRUPTED = "INTERRUPTED"             # User interrupted playback or listening
+
+WAKE_WORDS = ["hey nova", "okay nova", "ok nova", "hi nova", "nova", "hey computer"]
+
+def strip_assistant_prefix(text: str) -> str:
+    """
+    Strips assistant wake words or invocation prefixes:
+    'Hey NOVA, play Bohemian Rhapsody' -> 'play Bohemian Rhapsody'
+    'NOVA, shut down my laptop' -> 'shut down my laptop'
+    'Hey NOVA' -> ''
+    """
+    if not text:
+        return ""
+    clean = text.strip()
+    pattern = r'^(?:hey\s+nova|okay\s+nova|ok\s+nova|hi\s+nova|nova)[\s,:]*'
+    stripped = re.sub(pattern, '', clean, flags=re.IGNORECASE).strip()
+    return stripped
+
+def detect_wake_word(text: str) -> Tuple[bool, str]:
+    """
+    Detects if spoken or typed text contains a wake word.
+    Returns (has_wake_word, remaining_command).
+    """
+    if not text:
+        return False, ""
+    clean = text.strip()
+    lower = clean.lower()
+
+    for w in WAKE_WORDS:
+        if lower.startswith(w):
+            remainder = clean[len(w):].strip().lstrip(",:;").strip()
+            return True, remainder
+        elif f" {w} " in f" {lower} ":
+            idx = lower.find(w)
+            remainder = clean[idx + len(w):].strip().lstrip(",:;").strip()
+            return True, remainder
+
+    return False, clean
+
+class VoiceAssistantSession:
+    """
+    Coordinates the Siri-like voice lifecycle for NOVA:
+    STANDBY (passive wake-word listening)
+      ↳ "Hey NOVA" detected
+      ↳ LISTENING (active speech capture)
+      ↳ PROCESSING / THINKING
+      ↳ EXECUTING (8-stage computer use loop)
+      ↳ SPEAKING (TTS synthesis & speaker playback)
+      ↳ FOLLOW_UP (4-5s continuation window for natural back-and-forth)
+          ↳ user speaks -> LISTENING (no wake-word needed)
+          ↳ timeout -> STANDBY
+    Push-to-talk is always available to override or initiate commands instantly.
+    """
+
+    def __init__(self, follow_up_timeout: float = 4.5):
+        self.state: VoiceAssistantState = VoiceAssistantState.STANDBY
+        self.follow_up_timeout: float = follow_up_timeout
+        self.last_interaction_time: float = 0.0
+        self.is_push_to_talk: bool = False
+        self.history: List[Dict[str, Any]] = []
+
+    def set_state(self, new_state: VoiceAssistantState, detail: str = "") -> Dict[str, Any]:
+        """Transition assistant state and record event."""
+        prev = self.state
+        self.state = new_state
+        self.last_interaction_time = time.time()
+        entry = {
+            "from_state": prev.value if isinstance(prev, VoiceAssistantState) else str(prev),
+            "to_state": new_state.value if isinstance(new_state, VoiceAssistantState) else str(new_state),
+            "detail": detail,
+            "timestamp": time.time(),
+        }
+        self.history.append(entry)
+        return entry
+
+    def handle_voice_utterance(
+        self,
+        transcript: str,
+        is_ptt: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Process an utterance according to current assistant lifecycle:
+        - If in STANDBY: requires wake-word unless push-to-talk.
+        - If in FOLLOW_UP: accepts natural command directly without wake-word.
+        - If in LISTENING: processes command directly.
+        """
+        raw = (transcript or "").strip()
+        has_wake, remainder = detect_wake_word(raw)
+
+        if is_ptt:
+            # Push-to-talk bypasses wake-word requirements unconditionally
+            clean_cmd = strip_assistant_prefix(raw)
+            self.set_state(VoiceAssistantState.LISTENING, "Push-to-talk input accepted")
+            return {
+                "accepted": True,
+                "command": clean_cmd,
+                "is_wake_word_only": not bool(clean_cmd),
+                "is_follow_up": False,
+                "is_ptt": True,
+                "state": VoiceAssistantState.LISTENING.value,
+            }
+
+        if self.state == VoiceAssistantState.FOLLOW_UP:
+            # In follow-up conversation window: accepts direct continuation
+            clean_cmd = strip_assistant_prefix(raw)
+            self.set_state(VoiceAssistantState.LISTENING, "Follow-up speech received")
+            return {
+                "accepted": True,
+                "command": clean_cmd,
+                "is_wake_word_only": False,
+                "is_follow_up": True,
+                "is_ptt": False,
+                "state": VoiceAssistantState.LISTENING.value,
+            }
+
+        # Otherwise must be in STANDBY or IDLE: check for wake-word
+        if has_wake:
+            self.set_state(VoiceAssistantState.WAKE_DETECTED, "Wake word detected")
+            if remainder:
+                self.set_state(VoiceAssistantState.PROCESSING, f"Command: {remainder}")
+                return {
+                    "accepted": True,
+                    "command": remainder,
+                    "is_wake_word_only": False,
+                    "is_follow_up": False,
+                    "is_ptt": False,
+                    "state": VoiceAssistantState.PROCESSING.value,
+                }
+            else:
+                self.set_state(VoiceAssistantState.LISTENING, "Listening for command after wake word")
+                return {
+                    "accepted": True,
+                    "command": "",
+                    "is_wake_word_only": True,
+                    "is_follow_up": False,
+                    "is_ptt": False,
+                    "state": VoiceAssistantState.LISTENING.value,
+                }
+
+        # No wake word and not in follow up -> ignore or stay in standby
+        return {
+            "accepted": False,
+            "command": "",
+            "is_wake_word_only": False,
+            "is_follow_up": False,
+            "is_ptt": False,
+            "state": self.state.value,
+        }
+
+    def simulate_lifecycle_flow(
+        self,
+        interactions: List[Tuple[str, float]],
+    ) -> List[str]:
+        """
+        Simulate a sequence of (utterance, elapsed_time_since_last) interactions
+        to verify state transitions:
+        STANDBY → WAKE → LISTENING → SPEAKING → FOLLOW_UP → [Continuation or Timeout]
+        """
+        states_sequence = [self.state.value]
+
+        for utterance, time_delta in interactions:
+            # Check if follow-up expired
+            if self.state == VoiceAssistantState.FOLLOW_UP and time_delta > self.follow_up_timeout:
+                self.set_state(VoiceAssistantState.STANDBY, "Follow-up window expired, returning to standby")
+                states_sequence.append(self.state.value)
+
+            res = self.handle_voice_utterance(utterance)
+            if res["accepted"]:
+                states_sequence.append(self.state.value)
+                # Simulate execution & speaking
+                self.set_state(VoiceAssistantState.SPEAKING, "Synthesizing and playing response")
+                states_sequence.append(self.state.value)
+                # Enter follow-up window
+                self.set_state(VoiceAssistantState.FOLLOW_UP, "Entering follow-up conversation window")
+                states_sequence.append(self.state.value)
+
+        return states_sequence
+
+voice_assistant = VoiceAssistantSession()
+

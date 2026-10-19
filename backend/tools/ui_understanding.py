@@ -6,6 +6,9 @@ from .observation import get_unified_observation, extract_active_ui_elements, ge
 
 def locate_with_vision(query: str, screenshot_path: str) -> Optional[Dict[str, Any]]:
     """Multimodal vision locator using Gemini Vision."""
+    from ..privacy import private_mode
+    if private_mode.get():
+        return None
     from ..config import settings
     if not settings.GEMINI_API_KEY or not os.path.exists(screenshot_path):
         return None
@@ -19,7 +22,7 @@ def locate_with_vision(query: str, screenshot_path: str) -> Optional[Dict[str, A
             "Return ONLY a JSON object with: {\"center_x\": integer, \"center_y\": integer, \"label\": string, \"confidence\": float}."
         )
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=settings.GEMINI_MODEL,
             contents=[img, prompt],
         )
         if response and response.text:

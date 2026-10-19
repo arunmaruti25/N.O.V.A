@@ -1,6 +1,6 @@
 from enum import Enum
 from dataclasses import dataclass
-from typing import Dict, Set
+from typing import Dict, Set, Any
 
 class PermissionLevel(str, Enum):
     SAFE = "SAFE"

@@ -10,7 +10,7 @@ from .observation import get_unified_observation, get_active_window_info, get_sc
 from .ui_understanding import locate_ui_element
 from ..permissions import PermissionLevel
 
-pyautogui.FAILSAFE = False
+pyautogui.FAILSAFE = True
 
 async def observe_computer_tool(include_screenshot: bool = True, include_ui_elements: bool = True) -> Dict[str, Any]:
     """Execute unified computer observation."""
@@ -182,11 +182,39 @@ async def close_browser_tab(title_match: Optional[str] = None) -> Dict[str, Any]
     Close active browser tab or switch to matching tab and close it with Ctrl+W.
     """
     try:
-        # Send Ctrl+W hotkey to close the active tab
+        # Never send Ctrl+W to an arbitrary foreground application.
+        from pywinauto import Desktop
+        from .observation import get_open_windows
+        browsers = {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe"}
+        active = get_active_window_info()
+        candidates = []
+        windows = get_open_windows() if title_match else [active]
+        for info in windows:
+            if info.get("process_name", "").lower() not in browsers:
+                continue
+            window = Desktop(backend="uia").window(handle=info["hwnd"])
+            for tab in window.descendants(control_type="TabItem"):
+                if (title_match and title_match.lower() in tab.window_text().lower()) or (not title_match and tab.is_selected()):
+                    candidates.append((window, tab, info["hwnd"]))
+        if len(candidates) != 1:
+            return {"success": False, "error": "Could not identify one browser tab. Specify a unique tab title."}
+        window, tab, hwnd = candidates[0]
+        identity = tab.element_info.runtime_id
+        window.set_focus()
+        tab.select()
+        time.sleep(0.2)
+        if get_active_window_info().get("hwnd") != hwnd:
+            return {"success": False, "error": "Browser focus could not be verified."}
         pyautogui.hotkey('ctrl', 'w')
+        time.sleep(0.3)
+        remaining = window.descendants(control_type="TabItem") if window.exists() else []
+        closed = not any(t.element_info.runtime_id == identity for t in remaining)
         site_desc = f"'{title_match}'" if title_match else "active"
         return {
-            "success": True,
+            "success": closed,
+            "verified": closed,
+            "tab_closed": closed,
+            "error": None if closed else "The selected tab remains open.",
             "action": "browser.close_tab",
             "target": title_match or "active_tab",
             "message": f"Closed {site_desc} browser tab.",

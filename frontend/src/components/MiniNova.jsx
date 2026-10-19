@@ -19,7 +19,7 @@ export default function MiniNova() {
 
   const handleOrbClick = () => {
     if (status === NOVA_STATES.IDLE) {
-      triggerVoiceCommand("NOVA, status check");
+      triggerVoiceCommand();
     } else {
       cancelOperation();
     }

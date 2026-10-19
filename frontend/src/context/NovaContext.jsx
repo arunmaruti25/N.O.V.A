@@ -1,602 +1,148 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+﻿import { useState, useEffect, useCallback, useRef } from "react";
 import { NovaContext } from "./context";
-import { NOVA_STATES, AVAILABLE_MODELS } from "./constants";
+import { AVAILABLE_MODELS } from "./constants";
+
+function stored(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(`nova.${key}`)) ?? fallback; }
+  catch { return fallback; }
+}
+function usePreference(key, fallback) {
+  const [value, setValue] = useState(() => stored(key, fallback));
+  useEffect(() => { localStorage.setItem(`nova.${key}`, JSON.stringify(value)); }, [key, value]);
+  return [value, setValue];
+}
 
 export function NovaProvider({ children }) {
-  const [status, setStatus] = useState(NOVA_STATES.IDLE);
-  const [statusDetail, setStatusDetail] = useState("");
+  const [status, setStatus] = useState("OFFLINE");
+  const [statusDetail, setStatusDetail] = useState("Connecting to backend");
   const [errorMessage, setErrorMessage] = useState("");
-
-  // View navigation
   const [currentView, setCurrentView] = useState("home");
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = usePreference("sidebarCollapsed", false);
   const [isMiniMode, setIsMiniMode] = useState(false);
-
-  // Model routing
-  const [activeModel, setActiveModel] = useState(AVAILABLE_MODELS[0]);
-  const [isAutoRouting, setIsAutoRouting] = useState(true);
-
-  // Voice interaction state
-  const [isListening, setIsListening] = useState(false);
+  const [activeModel, setActiveModel] = usePreference("model", AVAILABLE_MODELS[0]);
+  const [isAutoRouting, setIsAutoRouting] = usePreference("autoRouting", true);
+  const [speechEnabled, setSpeechEnabled] = usePreference("speechEnabled", false);
+  const [reducedMotion, setReducedMotion] = usePreference("reducedMotion", false);
   const [transcript, setTranscript] = useState("");
-  const [waveformBars, setWaveformBars] = useState([
-    0.15, 0.2, 0.25, 0.2, 0.15,
-  ]);
-
-  // Backend live WebSocket connection
   const [isBackendConnected, setIsBackendConnected] = useState(false);
-  const wsRef = useRef(null);
-
-  // Task Manager State (Pause / Resume / Cancel)
   const [currentTask, setCurrentTask] = useState(null);
-
-  // Permission modal
-  const [permissionState, setPermissionState] = useState({
-    isOpen: false,
-    title: "",
-    description: "",
-    severity: "danger", // danger | warning | standard
-    detail: "",
-    onConfirm: null,
-    onCancel: null,
-  });
-
-  // Notifications
-  const [notifications, setNotifications] = useState([
-    {
-      id: 1,
-      type: "info",
-      title: "NOVA Initialized",
-      message: "Neural core online and calibrated for Windows environment.",
-    },
-  ]);
-
-  // Recent Activity Log
-  const [activities, setActivities] = useState([
-    {
-      id: 1,
-      action: "Vision Perception",
-      detail: "Analyzed desktop screen viewport",
-      time: "3m ago",
-      status: "success",
-      type: "vision",
-    },
-    {
-      id: 2,
-      action: "Web Intelligence",
-      detail: "Synthesized quantum computing breakthroughs",
-      time: "12m ago",
-      status: "success",
-      type: "web",
-    },
-    {
-      id: 3,
-      action: "App Control",
-      detail: "Launched Visual Studio Code",
-      time: "35m ago",
-      status: "success",
-      type: "computer",
-    },
-    {
-      id: 4,
-      action: "Skill Activated",
-      detail: "Mounted Browser Automation Extension",
-      time: "1h ago",
-      status: "success",
-      type: "skills",
-    },
-  ]);
-
-  // Reduced motion preference
-  const [reducedMotion, setReducedMotion] = useState(false);
-
-  const timerRef = useRef(null);
-
-  // Clear timers on unmount
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
+  const [permissionState, setPermissionState] = useState({ isOpen: false });
+  const [notifications, setNotifications] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [memories, setMemories] = useState([]);
+  const [tools, setTools] = useState([]);
+  const [modelConfig, setModelConfig] = useState([]);
+  const [systemStatus, setSystemStatus] = useState(null);
+  const [webResult, setWebResult] = useState(null);
+  const [visionResult, setVisionResult] = useState(null);
+  const wsRef = useRef(null);
+  const toastTimers = useRef(new Set());
+  const addNotification = useCallback((item) => {
+    const id = crypto.randomUUID();
+    setNotifications((prev) => [...prev.slice(-4), { ...item, id }]);
+    const timer = setTimeout(() => {
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      toastTimers.current.delete(timer);
+    }, item.duration || 6000);
+    toastTimers.current.add(timer);
   }, []);
-
-  const addNotification = useCallback((notif) => {
-    const id = Date.now() + Math.random();
-    setNotifications((prev) => [...prev, { id, ...notif }]);
-    if (notif.duration !== 0) {
-      setTimeout(() => {
-        setNotifications((prev) => prev.filter((item) => item.id !== id));
-      }, notif.duration || 4500);
+  const removeNotification = useCallback((id) => setNotifications((prev) => prev.filter((n) => n.id !== id)), []);
+  const addActivity = useCallback((item) => setActivities((prev) => [{ ...item, id: crypto.randomUUID(), time: new Date().toLocaleTimeString() }, ...prev].slice(0, 200)), []);
+  const send = useCallback((type, payload = {}) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) {
+      setStatus("OFFLINE");
+      setErrorMessage("Backend disconnected. Start the NOVA server and try again.");
+      setStatusDetail("Backend disconnected");
+      return false;
     }
+    setErrorMessage("");
+    wsRef.current.send(JSON.stringify({ type, payload }));
+    return true;
   }, []);
-
-  const removeNotification = useCallback((id) => {
-    setNotifications((prev) => prev.filter((item) => item.id !== id));
-  }, []);
-
-  const addActivity = useCallback((act) => {
-    setActivities((prev) => [
-      {
-        id: Date.now(),
-        time: "Just now",
-        status: "success",
-        ...act,
-      },
-      ...prev.slice(0, 19),
-    ]);
-  }, []);
-
-  // Method to request dangerous action confirmation
-  const requestPermission = useCallback(
-    ({
-      title,
-      description,
-      severity = "danger",
-      detail = "",
-      onConfirm,
-    }) => {
-      return new Promise((resolve) => {
-        setStatus(NOVA_STATES.CONFIRMATION);
-        setStatusDetail("ACTION AUTHORIZATION REQUIRED");
-        setPermissionState({
-          isOpen: true,
-          title,
-          description,
-          severity,
-          detail,
-          onConfirm: () => {
-            setPermissionState((p) => ({ ...p, isOpen: false }));
-            if (onConfirm) onConfirm();
-            resolve(true);
-          },
-          onCancel: () => {
-            setPermissionState((p) => ({ ...p, isOpen: false }));
-            setStatus(NOVA_STATES.IDLE);
-            setStatusDetail("Operation declined by user");
-            addNotification({
-              type: "info",
-              title: "Authorization Declined",
-              message: `Cancelled: ${title}`,
-            });
-            resolve(false);
-          },
-        });
-      });
-    },
-    [addNotification],
-  );
-
-  // Live WebSocket connector with automatic reconnect and fallback
   useEffect(() => {
-    let socket = null;
-    let reconnectTimeout = null;
-
-    function connectWs() {
-      try {
-        socket = new WebSocket("ws://127.0.0.1:8000/ws/nova");
-        wsRef.current = socket;
-
-        socket.onopen = () => {
-          setIsBackendConnected(true);
-        };
-
-        socket.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            const { type, payload } = data;
-
-            if (type === "STATE_CHANGE") {
-              if (payload.status) {
-                setStatus(payload.status);
-                setIsListening(payload.status === NOVA_STATES.LISTENING);
-              }
-              if (payload.detail !== undefined) setStatusDetail(payload.detail);
-            } else if (type === "TRANSCRIPT") {
-              if (payload.text) setTranscript(payload.text);
-            } else if (type === "NOTIFICATION") {
-              addNotification(payload);
-            } else if (type === "SPEECH_FINISHED" || type === "INTERRUPTED") {
-              setIsListening(false);
-              setStatus(NOVA_STATES.IDLE);
-              if (payload.detail) setStatusDetail(payload.detail);
-            } else if (type === "ASSISTANT_RESPONSE") {
-              if (payload.text) setTranscript(payload.text);
-              if (payload.model) {
-                const matched = AVAILABLE_MODELS.find(
-                  (m) => m.provider.toLowerCase() === String(payload.model).toLowerCase(),
-                );
-                if (matched) setActiveModel(matched);
-              }
-            } else if (type === "MODEL_INFO") {
-              if (payload.provider) {
-                const matched = AVAILABLE_MODELS.find(
-                  (m) => m.provider.toLowerCase() === String(payload.provider).toLowerCase(),
-                );
-                if (matched) setActiveModel(matched);
-              }
-            } else if (type === "PERMISSION_REQUEST") {
-              requestPermission({
-                title: payload.title,
-                description: payload.description,
-                detail: payload.detail,
-                severity: "danger",
-                onConfirm: () => {
-                  if (socket && socket.readyState === WebSocket.OPEN) {
-                    socket.send(
-                      JSON.stringify({
-                        type: "PERMISSION_DECISION",
-                        payload: { action: payload.action, authorized: true },
-                      }),
-                    );
-                  }
-                },
-              });
-            } else if (type === "ACTIVITY_LOG") {
-              addActivity(payload);
-            } else if (type === "TASK_CREATED" || type === "TASK_STARTED") {
-              setCurrentTask((prev) => ({ ...prev, ...payload, status: "RUNNING" }));
-            } else if (type === "TASK_STEP") {
-              setCurrentTask((prev) => ({ ...prev, ...payload, status: "RUNNING" }));
-            } else if (type === "TASK_PAUSED") {
-              setCurrentTask((prev) => ({ ...prev, ...payload, status: "PAUSED" }));
-              setStatus(NOVA_STATES.PAUSED);
-              setStatusDetail(payload.description || "Task Paused");
-              addNotification({
-                type: "info",
-                title: "Task Paused",
-                message: payload.description || "Task paused. Ready for new input.",
-              });
-            } else if (type === "TASK_RESUMED") {
-              setCurrentTask((prev) => ({ ...prev, ...payload, status: "RUNNING" }));
-              setStatus(NOVA_STATES.EXECUTING);
-              setStatusDetail(payload.description || "Resuming task...");
-              addNotification({
-                type: "info",
-                title: "Task Resumed",
-                message: payload.description || "Resuming task execution.",
-              });
-            } else if (type === "TASK_CANCELLED") {
-              setCurrentTask((prev) => ({ ...prev, ...payload, status: "CANCELLED" }));
-              setStatus(NOVA_STATES.IDLE);
-              setStatusDetail("Task cancelled");
-              addNotification({
-                type: "info",
-                title: "Task Cancelled",
-                message: payload.description || "Task execution cancelled.",
-              });
-            } else if (type === "TASK_COMPLETED") {
-              setCurrentTask((prev) => ({ ...prev, ...payload, status: "COMPLETED" }));
-              addNotification({
-                type: "success",
-                title: "Task Completed",
-                message: payload.description || "Task completed successfully.",
-              });
-            } else if (type === "TASK_FAILED") {
-              setCurrentTask((prev) => ({ ...prev, ...payload, status: "FAILED" }));
-              setStatus(NOVA_STATES.ERROR);
-              setStatusDetail(payload.error || "Task failed");
-            } else if (type === "ERROR") {
-              setIsListening(false);
-              setStatus(NOVA_STATES.ERROR);
-              setStatusDetail(payload.message || "Backend Error");
-            }
-          } catch {
-            // ignore non-json
-          }
-        };
-
-        socket.onclose = () => {
-          setIsBackendConnected(false);
-          reconnectTimeout = setTimeout(connectWs, 3500);
-        };
-
-        socket.onerror = () => {
-          setIsBackendConnected(false);
-        };
-      } catch {
-        setIsBackendConnected(false);
-        reconnectTimeout = setTimeout(connectWs, 3500);
-      }
-    }
-
-    connectWs();
-
-    return () => {
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      if (socket) socket.close();
-    };
-  }, [addActivity, addNotification, requestPermission]);
-
-  // Audio wave simulator for listening / speaking
-  useEffect(() => {
-    if (status !== NOVA_STATES.LISTENING && status !== NOVA_STATES.SPEAKING) {
-      return;
-    }
-    const interval = setInterval(() => {
-      setWaveformBars([
-        0.2 + Math.random() * 0.7,
-        0.3 + Math.random() * 0.65,
-        0.4 + Math.random() * 0.6,
-        0.3 + Math.random() * 0.68,
-        0.2 + Math.random() * 0.6,
-      ]);
-    }, 90);
-    return () => {
-      clearInterval(interval);
-      setWaveformBars([0.15, 0.2, 0.25, 0.2, 0.15]);
-    };
-  }, [status]);
-
-  // Method to trigger voice command execution flow (real backend with mock fallback)
-  const triggerVoiceCommand = useCallback(
-    (cmdText) => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-
-      // 1. If backend WebSocket is live, send real event
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        if (!cmdText) {
-          // Trigger real microphone recording on backend
-          setIsListening(true);
-          setStatus(NOVA_STATES.LISTENING);
-          setStatusDetail("LISTENING... SPEAK NOW");
-          setTranscript("");
-
-          wsRef.current.send(
-            JSON.stringify({
-              type: "START_LISTENING",
-              payload: {
-                model: activeModel.provider,
-              },
-            }),
-          );
-          return;
+    let disposed = false;
+    let reconnectTimer;
+    let socket;
+    const timers = toastTimers.current;
+    function connect() {
+      if (disposed) return;
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const host = import.meta.env.VITE_BACKEND_URL || `${protocol}//${location.port === "5173" ? `${location.hostname}:8000` : location.host}`;
+      socket = new WebSocket(`${host.replace(/\/$/, "")}/ws/nova`);
+      wsRef.current = socket;
+      socket.onopen = () => { if (!disposed) setIsBackendConnected(true); };
+      socket.onmessage = ({ data }) => {
+        if (disposed) return;
+        let message;
+        try { message = JSON.parse(data); } catch { return; }
+        const { type, payload: p = {} } = message;
+        if (type === "STATE_CHANGE") { setStatus(p.status); setStatusDetail(p.detail || ""); }
+        else if (type === "TRANSCRIPT" || type === "ASSISTANT_RESPONSE") setTranscript(p.text || "");
+        else if (type === "MEMORY_SYNC") setMemories(p.memories || []);
+        else if (type === "SKILLS_SYNC") setTools(p.tools || []);
+        else if (type === "MODEL_CONFIG") setModelConfig(p.models || []);
+        else if (type === "SYSTEM_STATUS") setSystemStatus(p);
+        else if (type === "WEB_RESULT") setWebResult(p);
+        else if (type === "VISION_RESULT") setVisionResult(p);
+        else if (type === "NOTIFICATION") addNotification(p);
+        else if (type === "ACTIVITY_LOG") addActivity(p);
+        else if (type === "ERROR") { setStatus("ERROR"); setStatusDetail(p.message); setErrorMessage(p.message); }
+        else if (type === "PERMISSION_REQUEST") {
+          const decide = (authorized) => {
+            send("PERMISSION_DECISION", { approval_id: p.approval_id, authorized });
+            setPermissionState({ isOpen: false });
+          };
+          setPermissionState({ ...p, isOpen: true, onConfirm: () => decide(true), onCancel: () => decide(false) });
+        } else if (type.startsWith("TASK_")) {
+          const states = { TASK_CREATED: "RUNNING", TASK_STARTED: "RUNNING", TASK_STEP: "RUNNING", TASK_PAUSED: "PAUSED", TASK_COMPLETED: "COMPLETED", TASK_CANCELLED: "CANCELLED", TASK_FAILED: "FAILED" };
+          if (states[type]) setCurrentTask((prev) => ({ ...prev, ...p, status: states[type] }));
+          if (type === "TASK_PAUSED") setStatus("PAUSED");
+          if (type === "TASK_CANCELLED") { setStatus("IDLE"); setPermissionState({ isOpen: false }); }
         }
-
-        // Direct typed or chip command
-        setIsListening(false);
-        setStatus(NOVA_STATES.PROCESSING);
-        setStatusDetail("PROCESSING COMMAND...");
-        setTranscript(cmdText);
-
-        wsRef.current.send(
-          JSON.stringify({
-            type: "USER_INPUT",
-            payload: {
-              text: cmdText,
-              model: activeModel.provider,
-            },
-          }),
-        );
-        return;
-      }
-
-      // 2. Otherwise graceful client fallback
-      setIsListening(true);
-      setStatus(NOVA_STATES.LISTENING);
-      setStatusDetail("LISTENING TO VOICE...");
-      setTranscript("");
-
-      const words = cmdText.split(" ");
-      let currentIdx = 0;
-      const textInterval = setInterval(() => {
-        if (currentIdx < words.length) {
-          setTranscript(words.slice(0, currentIdx + 1).join(" "));
-          currentIdx++;
-        } else {
-          clearInterval(textInterval);
-
-          setIsListening(false);
-          setStatus(NOVA_STATES.PROCESSING);
-          setStatusDetail("PARSING SEMANTIC INTENT...");
-
-          timerRef.current = setTimeout(() => {
-            setStatus(NOVA_STATES.THINKING);
-            setStatusDetail("FORMULATING PLAN...");
-
-            if (
-              cmdText.toLowerCase().includes("screen") ||
-              cmdText.toLowerCase().includes("what")
-            ) {
-              setActiveModel(AVAILABLE_MODELS[0]);
-            } else if (
-              cmdText.toLowerCase().includes("code") ||
-              cmdText.toLowerCase().includes("script")
-            ) {
-              setActiveModel(AVAILABLE_MODELS[2]);
-            } else if (
-              cmdText.toLowerCase().includes("shut down") ||
-              cmdText.toLowerCase().includes("delete")
-            ) {
-              setActiveModel(AVAILABLE_MODELS[3]);
-            } else {
-              setActiveModel(AVAILABLE_MODELS[1]);
-            }
-
-            timerRef.current = setTimeout(() => {
-              if (
-                cmdText.toLowerCase().includes("shut down") ||
-                cmdText.toLowerCase().includes("delete")
-              ) {
-                requestPermission({
-                  title: cmdText.toLowerCase().includes("shut down")
-                    ? "System Power Action"
-                    : "File System Deletion",
-                  description: cmdText.toLowerCase().includes("shut down")
-                    ? "NOVA requested permission to power down the host Windows workstation."
-                    : "NOVA requested permission to remove requested directory and its contents.",
-                  severity: "danger",
-                  detail: cmdText.toLowerCase().includes("shut down")
-                    ? "C:\\Windows\\System32\\shutdown.exe /s /t 0"
-                    : "D:\\Projects\\TempCache\\*",
-                  onConfirm: () => {
-                    setStatus(NOVA_STATES.EXECUTING);
-                    setStatusDetail(`EXECUTING: ${cmdText.toUpperCase()}`);
-                    addActivity({
-                      action: "System Execution",
-                      detail: cmdText,
-                      type: "computer",
-                    });
-
-                    setTimeout(() => {
-                      setStatus(NOVA_STATES.SUCCESS);
-                      setStatusDetail("COMMAND COMPLETED");
-                      setTimeout(() => {
-                        setStatus(NOVA_STATES.IDLE);
-                        setStatusDetail("");
-                        setTranscript("");
-                      }, 2200);
-                    }, 1800);
-                  },
-                });
-              } else {
-                setStatus(NOVA_STATES.EXECUTING);
-                setStatusDetail(`EXECUTING: ${cmdText.toUpperCase()}`);
-                addActivity({
-                  action: cmdText.toLowerCase().includes("screen")
-                    ? "Vision Capture"
-                    : cmdText.toLowerCase().includes("search")
-                      ? "Web Research"
-                      : "System Command",
-                  detail: cmdText,
-                  type: cmdText.toLowerCase().includes("screen")
-                    ? "vision"
-                    : cmdText.toLowerCase().includes("search")
-                      ? "web"
-                      : "computer",
-                });
-
-                timerRef.current = setTimeout(() => {
-                  setStatus(NOVA_STATES.SPEAKING);
-                  setStatusDetail("RESPONDING");
-                  setTranscript(
-                    cmdText.toLowerCase().includes("screen")
-                      ? "I analyzed your active workspace: IDE open with clean file structure."
-                      : cmdText.toLowerCase().includes("chrome")
-                        ? "Google Chrome launched successfully in your primary monitor."
-                        : cmdText.toLowerCase().includes("volume")
-                          ? "Windows audio output adjusted."
-                          : `Completed request for: "${cmdText}".`,
-                  );
-
-                  timerRef.current = setTimeout(() => {
-                    setStatus(NOVA_STATES.SUCCESS);
-                    setStatusDetail("DONE");
-
-                    timerRef.current = setTimeout(() => {
-                      setStatus(NOVA_STATES.IDLE);
-                      setStatusDetail("");
-                      setTranscript("");
-                    }, 1500);
-                  }, 3000);
-                }, 1800);
-              }
-            }, 1400);
-          }, 1100);
-        }
-      }, 180);
-    },
-    [activeModel.provider, addActivity, requestPermission],
-  );
-
-  // Cancel any active operation and return to IDLE
-  const cancelOperation = useCallback(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "INTERRUPT",
-          payload: {},
-        }),
-      );
+      };
+      socket.onclose = () => {
+        if (disposed) return;
+        setIsBackendConnected(false); setStatus("OFFLINE"); setStatusDetail("Backend disconnected; reconnecting");
+        setPermissionState({ isOpen: false }); setCurrentTask(null);
+        reconnectTimer = setTimeout(connect, 2500);
+      };
+      socket.onerror = () => socket.close();
     }
-    setIsListening(false);
-    setStatus(NOVA_STATES.IDLE);
-    setStatusDetail("");
-    setPermissionState((p) => ({ ...p, isOpen: false }));
-    addNotification({
-      type: "info",
-      title: "Operation Cancelled",
-      message: "Returned to idle state.",
-    });
-  }, [addNotification]);
-
-  // Task Manager controls (Pause / Resume / Cancel)
-  const pauseTask = useCallback((taskId) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "TASK_PAUSE",
-          payload: { task_id: taskId },
-        }),
-      );
-    }
-  }, []);
-
-  const resumeTask = useCallback((taskId) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "TASK_RESUME",
-          payload: { task_id: taskId },
-        }),
-      );
-    }
-  }, []);
-
-  const cancelTask = useCallback((taskId) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "TASK_CANCEL",
-          payload: { task_id: taskId },
-        }),
-      );
-    }
-  }, []);
-
-  return (
-    <NovaContext.Provider
-      value={{
-        status,
-        setStatus,
-        statusDetail,
-        setStatusDetail,
-        errorMessage,
-        setErrorMessage,
-        currentView,
-        setCurrentView,
-        sidebarCollapsed,
-        setSidebarCollapsed,
-        isMiniMode,
-        setIsMiniMode,
-        activeModel,
-        setActiveModel,
-        isAutoRouting,
-        setIsAutoRouting,
-        availableModels: AVAILABLE_MODELS,
-        isListening,
-        setIsListening,
-        transcript,
-        setTranscript,
-        waveformBars,
-        permissionState,
-        requestPermission,
-        notifications,
-        addNotification,
-        removeNotification,
-        activities,
-        addActivity,
-        reducedMotion,
-        setReducedMotion,
-        triggerVoiceCommand,
-        cancelOperation,
-        isBackendConnected,
-        currentTask,
-        pauseTask,
-        resumeTask,
-        cancelTask,
-      }}
-    >
-      {children}
-    </NovaContext.Provider>
-  );
+    connect();
+    return () => {
+      disposed = true; clearTimeout(reconnectTimer);
+      for (const timer of timers) clearTimeout(timer);
+      socket?.close(); wsRef.current = null;
+    };
+  }, [send, addActivity, addNotification]);
+  const request = useCallback((type, payload = {}) => {
+    const sent = send(type, { model: isAutoRouting ? "auto" : activeModel.provider, speech_enabled: speechEnabled, ...payload });
+    if (sent) { setStatus("PROCESSING"); setStatusDetail("Working on your request"); }
+    return sent;
+  }, [send, activeModel.provider, isAutoRouting, speechEnabled]);
+  const triggerVoiceCommand = useCallback((text) => {
+    if (text?.trim()) {
+      const command = text.trim();
+      if (/^(?:nova[, ]+)?(?:stop|cancel)(?: task)?[.!]?$/i.test(command)) return send("INTERRUPT");
+      if (/^(?:nova[, ]+)?pause(?: task)?[.!]?$/i.test(command)) return send("TASK_PAUSE");
+      if (/^(?:nova[, ]+)?resume(?: task)?[.!]?$/i.test(command)) return request("TASK_RESUME");
+      if (request("USER_INPUT", { text: command })) setTranscript(command);
+    } else request("START_LISTENING");
+  }, [request, send]);
+  const cancelOperation = useCallback(() => { send("INTERRUPT"); setPermissionState({ isOpen: false }); }, [send]);
+  const pauseTask = useCallback((task_id) => send("TASK_PAUSE", { task_id }), [send]);
+  const resumeTask = useCallback((task_id) => request("TASK_RESUME", { task_id }), [request]);
+  const cancelTask = useCallback((task_id) => send("TASK_CANCEL", { task_id }), [send]);
+  const busy = ["PROCESSING", "THINKING", "EXECUTING", "RECOVERING", "SPEAKING", "LISTENING", "CONFIRMATION"].includes(status);
+  const availableModels = AVAILABLE_MODELS.map((m) => ({ ...m, ...modelConfig.find((c) => c.provider === m.provider) }));
+  return <NovaContext.Provider value={{
+    status, setStatus, statusDetail, setStatusDetail, errorMessage, setErrorMessage,
+    currentView, setCurrentView, sidebarCollapsed, setSidebarCollapsed, isMiniMode, setIsMiniMode,
+    activeModel, setActiveModel, isAutoRouting, setIsAutoRouting, availableModels,
+    speechEnabled, setSpeechEnabled, reducedMotion, setReducedMotion,
+    isListening: status === "LISTENING", transcript, setTranscript, waveformBars: [0.2, 0.4, 0.7, 0.4, 0.2],
+    permissionState, notifications, addNotification, removeNotification, activities, addActivity,
+    triggerVoiceCommand, cancelOperation, isBackendConnected, currentTask, pauseTask, resumeTask, cancelTask,
+    request, send, busy, memories, tools, systemStatus, webResult, visionResult,
+  }}>{children}</NovaContext.Provider>;
 }

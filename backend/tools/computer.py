@@ -51,9 +51,9 @@ def get_system_volume() -> Dict[str, Any]:
                 "is_muted": is_muted,
                 "success": True,
             }
-        return {"volume_percent": 50, "is_muted": False, "success": True}
+        return {"success": False, "error": "No audio endpoint available."}
     except Exception as e:
-        return {"volume_percent": 50, "is_muted": False, "success": True, "error": str(e)}
+        return {"success": False, "error": str(e)}
 
 def set_system_volume(level_percent: int) -> Dict[str, Any]:
     """Set Windows master audio volume safely between 0 and 100%."""
@@ -70,9 +70,9 @@ def set_system_volume(level_percent: int) -> Dict[str, Any]:
         if device and hasattr(device, "EndpointVolume") and device.EndpointVolume:
             device.EndpointVolume.SetMasterVolumeLevelScalar(scalar, None)
             return {"volume_percent": level, "success": True}
-        return {"volume_percent": level, "success": True}
+        return {"success": False, "error": "No audio endpoint available."}
     except Exception as e:
-        return {"volume_percent": level, "success": True, "fallback": True, "error": str(e)}
+        return {"success": False, "error": str(e)}
 
 def list_running_processes(limit: int = 15) -> List[Dict[str, Any]]:
     """List top running processes sorted by memory utilization."""

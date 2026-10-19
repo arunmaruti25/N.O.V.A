@@ -91,7 +91,7 @@ def verify_browser_opened(result: Dict[str, Any], arguments: Dict[str, Any]) -> 
                 return True, f"Verified browser process '{p_name}' is running."
         except Exception:
             continue
-    return True, "URL dispatch verified."
+    return False, "No supported browser process observed after opening the URL."
 
 def search_browser(query: str, engine: str = "youtube", browser: Optional[str] = None) -> Dict[str, Any]:
     """Search for query on YouTube, Google, DuckDuckGo, etc."""

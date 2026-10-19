@@ -9,13 +9,20 @@ from ..permissions import PermissionLevel
 @dataclass
 class ToolResult:
     success: bool
-    tool: str
+    tool: str = ""
     result: Any = None
     verified: bool = False
     verification_detail: str = ""
     error: Optional[str] = None
     duration_ms: int = 0
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    tool_name: Optional[str] = None
+
+    def __post_init__(self):
+        if not self.tool and self.tool_name:
+            self.tool = self.tool_name
+        elif self.tool and not self.tool_name:
+            self.tool_name = self.tool
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -184,10 +191,18 @@ class ToolRegistry:
         # 3. Execution
         start_time = time.perf_counter()
         try:
-            if inspect.iscoroutinefunction(tool.execute_fn):
-                exec_result = await tool.execute_fn(**arguments)
-            else:
-                exec_result = await asyncio.to_thread(tool.execute_fn, **arguments)
+            # Desktop libraries (including async wrappers) perform blocking OS calls.
+            # Hold execution until an in-flight OS action finishes on cancellation.
+            def invoke():
+                if inspect.iscoroutinefunction(tool.execute_fn):
+                    return asyncio.run(tool.execute_fn(**arguments))
+                return tool.execute_fn(**arguments)
+            operation = asyncio.create_task(asyncio.to_thread(invoke))
+            try:
+                exec_result = await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                await operation
+                raise
 
             duration_ms = int((time.perf_counter() - start_time) * 1000)
 
@@ -203,8 +218,8 @@ class ToolRegistry:
                 )
 
             # 4. Verification Check
-            verified = True
-            verification_detail = "Action completed."
+            verified = bool(isinstance(exec_result, dict) and exec_result.get("verified", False))
+            verification_detail = "Action executed; outcome not independently verified."
             if tool.verify_fn:
                 try:
                     if inspect.iscoroutinefunction(tool.verify_fn):

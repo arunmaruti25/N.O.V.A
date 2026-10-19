@@ -13,19 +13,19 @@ import VoiceBar from "../components/VoiceBar";
 import { useNova } from "../context/useNova";
 
 export default function HomeView() {
-  const { setCurrentView, triggerVoiceCommand, activeModel } = useNova();
+  const { setCurrentView, activeModel } = useNova();
 
   const quickActions = [
     {
-      title: "Analyze Screen",
-      desc: "Multimodal vision perception",
+      title: "Capture Screen",
+      desc: "Local monitor preview",
       badge: "VISION HUD",
       icon: Eye,
       color: "var(--color-nova-cyan)",
       bgGradient:
         "linear-gradient(135deg, rgba(34, 211, 238, 0.15) 0%, rgba(14, 116, 144, 0.05) 100%)",
       borderColor: "rgba(34, 211, 238, 0.3)",
-      action: () => triggerVoiceCommand("NOVA, what's on my screen?"),
+      action: () => setCurrentView("vision"),
     },
     {
       title: "Web Intelligence",

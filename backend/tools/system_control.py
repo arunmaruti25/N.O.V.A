@@ -83,11 +83,14 @@ def verify_volume_set(result: Dict[str, Any], arguments: Dict[str, Any]) -> Tupl
     """Verify that the volume was updated."""
     expected = int(arguments.get("level", 50))
     time.sleep(0.1)
-    current = get_system_volume().get("volume_percent", expected)
+    observed = get_system_volume()
+    if not observed.get("success"):
+        return False, observed.get("error", "Could not read volume.")
+    current = observed["volume_percent"]
     # Allow 2% tolerance due to Windows audio slider quantization
     if abs(current - expected) <= 3:
         return True, f"Verified master volume is {current}%."
-    return True, f"Volume set acknowledged at {current}%."
+    return False, f"Expected {expected}%, but observed {current}%."
 
 def mute_volume_tool(mute: Optional[bool] = None) -> Dict[str, Any]:
     """Toggle or set audio mute state."""

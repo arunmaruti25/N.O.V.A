@@ -150,7 +150,7 @@ def create_file(path: str, content: str = "") -> Dict[str, Any]:
 
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
+        with open(p, "x", encoding="utf-8") as f:
             f.write(content)
         return {
             "success": True,

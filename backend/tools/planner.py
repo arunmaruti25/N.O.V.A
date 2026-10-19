@@ -229,15 +229,15 @@ def plan_task_from_natural_language(user_input: str) -> Optional[List[Dict[str, 
         if "set" in lower or "change" in lower or (vol_match and "to" in lower):
             level = int(vol_match.group(1)) if vol_match else 50
             return [{"tool": "system.set_volume", "arguments": {"level": max(0, min(100, level))}}]
-        elif "mute" in lower:
-            return [{"tool": "system.mute", "arguments": {"mute": True}}]
         elif "unmute" in lower:
             return [{"tool": "system.mute", "arguments": {"mute": False}}]
+        elif "mute" in lower:
+            return [{"tool": "system.mute", "arguments": {"mute": True}}]
         else:
             return [{"tool": "system.get_volume", "arguments": {}}]
 
     if "mute" in lower and "volume" not in lower:
-        return [{"tool": "system.mute", "arguments": {}}]
+        return [{"tool": "system.mute", "arguments": {"mute": "unmute" not in lower}}]
 
     # 6. Compound Multi-Step: "Open Chrome and search YouTube for <query>"
     multi_browser_search = re.search(
@@ -420,7 +420,7 @@ def plan_task_from_natural_language(user_input: str) -> Optional[List[Dict[str, 
 
     # 18. Application Launch / Open
     if lower.startswith("open ") or lower.startswith("launch "):
-        target_app = text[5:].strip().rstrip(".")
+        target_app = text.split(maxsplit=1)[1].strip().rstrip(".")
         # Exclude web URLs or domains
         if "." in target_app and "/" in target_app:
             return [{"tool": "browser.open", "arguments": {"url": target_app}}]

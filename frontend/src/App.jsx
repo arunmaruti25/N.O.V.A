@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, MotionConfig } from "framer-motion";
 import { NovaProvider } from "./context/NovaContext";
 import { useNova } from "./context/useNova";
 import Header from "./components/Header";
@@ -7,7 +7,6 @@ import Sidebar from "./components/Sidebar";
 import MiniNova from "./components/MiniNova";
 import PermissionModal from "./components/PermissionModal";
 import NotificationToast from "./components/NotificationToast";
-import StateDevBar from "./components/StateDevBar";
 
 import HomeView from "./views/HomeView";
 import VisionView from "./views/VisionView";
@@ -26,6 +25,9 @@ function NovaMainApp() {
     setIsMiniMode,
     triggerVoiceCommand,
     cancelOperation,
+    permissionState,
+    reducedMotion,
+    errorMessage,
   } = useNova();
 
   // Global keyboard shortcuts
@@ -39,19 +41,19 @@ function NovaMainApp() {
       // Ctrl + Shift + N to trigger voice
       if (e.ctrlKey && e.shiftKey && (e.key === "n" || e.key === "N")) {
         e.preventDefault();
-        triggerVoiceCommand("NOVA, listening for instructions");
+        triggerVoiceCommand();
       }
       // Esc to interrupt
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && !permissionState.isOpen) {
         cancelOperation();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setIsMiniMode, triggerVoiceCommand, cancelOperation]);
+  }, [setIsMiniMode, triggerVoiceCommand, cancelOperation, permissionState.isOpen]);
 
   return (
-    <div
+    <MotionConfig reducedMotion={reducedMotion ? "always" : "user"}><div
       style={{
         width: "100vw",
         height: "100vh",
@@ -85,6 +87,7 @@ function NovaMainApp() {
         >
           {/* Header Bar */}
           <Header />
+          {errorMessage && currentView === "home" && <p role="alert" className="notice error">{errorMessage}</p>}
 
           {/* Main workspace (Sidebar + Active View) */}
           <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
@@ -130,8 +133,8 @@ function NovaMainApp() {
       {/* Overlays */}
       <PermissionModal />
       <NotificationToast />
-      <StateDevBar />
     </div>
+    </MotionConfig>
   );
 }
 

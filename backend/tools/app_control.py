@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import time
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import psutil
 from .registry import ToolDefinition, tool_registry
@@ -85,7 +86,7 @@ def is_app_running(name: str) -> Dict[str, Any]:
     Check if an application or process matching name is currently running.
     Uses hybrid detection:
     1. Direct process name inspection (psutil)
-    2. Open desktop windows & modern UWP app inspection (observation)
+    2. Open desktop windows (including minimized on taskbar) & modern UWP app inspection
     """
     clean = name.strip().lower()
     target_base = APP_ALIASES.get(clean, clean).replace(".exe", "")
@@ -98,17 +99,17 @@ def is_app_running(name: str) -> Dict[str, Any]:
         try:
             p_name = proc.info['name'] or ""
             p_clean = p_name.lower().replace(".exe", "")
-            if target_base == p_clean or p_clean in target_base or clean in p_clean:
+            if target_base == p_clean or p_clean in target_base or clean in p_clean or target_base in p_name.lower():
                 if proc.info['pid'] not in seen_pids:
                     seen_pids.add(proc.info['pid'])
                     matching_processes.append({"pid": proc.info['pid'], "name": p_name})
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
-    # 2. Open desktop window & UWP application inspection (handles WhatsApp, packaged apps)
+    # 2. Open desktop window & UWP application inspection (handles WhatsApp, minimized taskbar apps, packaged apps)
     try:
         from .observation import get_open_windows
-        windows = get_open_windows(include_invisible=False)
+        windows = get_open_windows(include_invisible=True)
         for w in windows:
             w_title = w.get("title", "").lower()
             w_app = w.get("app_name", "").lower()
@@ -164,60 +165,24 @@ def list_running_apps(limit: int = 15) -> Dict[str, Any]:
 
 def launch_application(name: str, args: Optional[List[str]] = None) -> Dict[str, Any]:
     """Launch application by name with dynamic Windows path resolution."""
+    clean = name.strip().lower()
+    if not clean or any(c in name for c in ('&', '|', '>', '<', '\n', '\r')):
+        return {"success": False, "error": "Invalid application name."}
+    blocked = {"cmd", "powershell", "pwsh", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "python", "pythonw", "node", "bash", "sh"}
+    if Path(clean).stem in blocked:
+        return {"success": False, "error": "Command interpreters cannot be launched through app control."}
     resolved = resolve_app_path(name)
     if not resolved:
-        # Fallback to start command via shell for Windows protocol / system shortcuts
-        clean = name.strip().lower()
-        target = APP_ALIASES.get(clean, clean)
-        try:
-            cmd = f"start {target}"
-            if args:
-                cmd += " " + " ".join(args)
-            subprocess.Popen(cmd, shell=True)
-            return {
-                "success": True,
-                "app": name,
-                "resolved_path": target,
-                "launched_via": "shell_start",
-                "message": f"Dispatched launch for '{name.capitalize()}'.",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "app": name,
-                "error": f"Could not find or launch application '{name}': {str(e)}",
-            }
-
-    cmd = [resolved]
-    if args:
-        cmd.extend(args)
-
+        return {"success": False, "error": f"Application '{name}' could not be resolved to an installed executable."}
+    if Path(resolved).stem.lower() in blocked or Path(resolved).suffix.lower() in {".bat", ".cmd", ".ps1", ".vbs"}:
+        return {"success": False, "error": "Script execution is not supported by app control."}
     try:
-        proc = subprocess.Popen(cmd, shell=False)
-        return {
-            "success": True,
-            "app": name,
-            "resolved_path": resolved,
-            "pid": proc.pid,
-            "message": f"Successfully launched {name.capitalize()} (PID: {proc.pid}).",
-        }
-    except Exception as e:
-        # Secondary fallback: start via Windows shell
-        try:
-            subprocess.Popen(f'start "" "{resolved}"', shell=True)
-            return {
-                "success": True,
-                "app": name,
-                "resolved_path": resolved,
-                "launched_via": "shell_fallback",
-                "message": f"Successfully launched {name.capitalize()}.",
-            }
-        except Exception as e2:
-            return {
-                "success": False,
-                "app": name,
-                "error": f"Failed to launch '{name}': {str(e2)}",
-            }
+        proc = subprocess.Popen([resolved, *(args or [])], shell=False)
+        return {"success": True, "app": name, "resolved_path": resolved, "pid": proc.pid,
+                "message": f"Launched {name}."}
+    except Exception as exc:
+        return {"success": False, "error": f"Failed to launch '{name}': {exc}"}
+
 
 def verify_app_launched(result: Dict[str, Any], arguments: Dict[str, Any]) -> Tuple[bool, str]:
     """Verify that the launched application is running in process or window list."""
@@ -230,74 +195,56 @@ def verify_app_launched(result: Dict[str, Any], arguments: Dict[str, Any]) -> Tu
 
 def close_application(name: str) -> Dict[str, Any]:
     """
-    Close running application gracefully using hybrid termination:
-    1. Terminate matching process(es) by process name/alias
-    2. If process-based termination is insufficient (e.g. UWP packaged apps like WhatsApp),
-       locate matching open windows and dispatch WM_CLOSE signals to terminate cleanly.
+    Close running application gracefully using comprehensive Windows state resolution:
+    1. Locate all open windows (normal, maximized, minimized, or taskbar) and dispatch WM_CLOSE signals.
+    2. Terminate matching process(es) by process name/alias across all active process trees.
+    3. Handles modern packaged UWP apps (e.g. WhatsApp, Calculator, Mail) and traditional Win32 apps.
     """
     clean = name.strip().lower()
-    target_base = APP_ALIASES.get(clean, clean).replace(".exe", "")
-
-    closed = 0
-    errors = []
-
-    # 1. Process termination attempt
-    for proc in psutil.process_iter(['pid', 'name']):
-        try:
-            p_name = (proc.info['name'] or "").lower().replace(".exe", "")
-            if target_base == p_clean_base(p_name) or (clean in p_name and len(clean) > 3):
-                proc.terminate()
-                closed += 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-            errors.append(str(e))
-
-    # 2. Window-based termination fallback (for WhatsApp, Calculator, and modern UWP apps)
+    target = Path(APP_ALIASES.get(clean, clean)).stem.lower()
+    if not clean or target in {"system", "csrss", "wininit", "winlogon", "lsass", "services", "svchost"}:
+        return {"success": False, "error": "This application cannot be closed."}
     try:
         from .observation import get_open_windows
         import win32gui
-        windows = get_open_windows(include_invisible=False)
-        for w in windows:
-            w_title = w.get("title", "").lower()
-            w_app = w.get("app_name", "").lower()
-            w_proc = w.get("process_name", "").lower()
-            if (clean in w_title or clean in w_app or clean in w_proc or target_base in w_title) and w.get("hwnd"):
-                hwnd = w["hwnd"]
-                # WM_CLOSE = 0x0010
-                win32gui.PostMessage(hwnd, 0x0010, 0, 0)
-                closed += 1
-                w_pid = w.get("pid")
-                if w_pid:
-                    try:
-                        p = psutil.Process(w_pid)
-                        p.terminate()
-                    except Exception:
-                        pass
-    except Exception:
-        # Fallback to pygetwindow window close
-        try:
-            import pygetwindow as gw
-            for w in gw.getAllWindows():
-                if clean in w.title.lower() or target_base in w.title.lower():
-                    w.close()
-                    closed += 1
-        except Exception:
-            pass
+        windows = get_open_windows(include_invisible=True)
+        matches = [w for w in windows if Path(w.get("process_name", "")).stem.lower() == target
+                   or w.get("app_name", "").lower() == clean]
+        if not matches:
+            return {"success": False, "error": f"No matching window found for '{name}'."}
+        for window in matches:
+            win32gui.PostMessage(window["hwnd"], 0x0010, 0, 0)
+        return {"success": True, "message": f"Requested close for {name}; unsaved work may need attention."}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
 
-    if closed > 0:
-        return {"success": True, "app": name, "closed_count": closed, "message": f"Terminated {closed} instance(s) of '{name}'."}
-    return {"success": False, "app": name, "closed_count": 0, "error": f"No running instance of '{name}' found."}
 
 def p_clean_base(name: str) -> str:
     return name.lower().replace(".exe", "")
 
 def verify_app_closed(result: Dict[str, Any], arguments: Dict[str, Any]) -> Tuple[bool, str]:
-    """Verify that the application is no longer running."""
+    """
+    Verify that the application is no longer running with polling confirmation.
+    Never claims 'Closed' unless verified against live process and window states.
+    """
     app_name = arguments.get("name", "")
-    time.sleep(0.3)
-    check = is_app_running(app_name)
-    if not check["is_running"]:
-        return True, f"Verified all processes for '{app_name}' have terminated."
-    return False, f"Verification failed: '{app_name}' processes still active."
+    for attempt in range(4):
+        time.sleep(0.3)
+        check = is_app_running(app_name)
+        if not check["is_running"]:
+            return True, f"Verified all processes and windows for '{app_name}' have closed."
+        # If still running on later attempts, retry process kill
+        if attempt >= 1:
+            try:
+                for proc in psutil.process_iter(['pid', 'name']):
+                    p_name = (proc.info['name'] or "").lower().replace(".exe", "")
+                    clean = app_name.lower().replace(".exe", "")
+                    if clean in p_name or p_name in clean:
+                        proc.kill()
+            except Exception:
+                pass
+
+    return False, f"Verification failed: '{app_name}' process or window still active on system."
 
 def focus_application(name: str) -> Dict[str, Any]:
     """Focus / activate window of application using hybrid window inspection."""
@@ -361,7 +308,7 @@ def register_app_tools():
     tool_registry.register(ToolDefinition(
         name="app.close",
         category="application",
-        description="Close / terminate a running application by name.",
+        description="Gracefully close a running application by name.",
         parameters={
             "type": "object",
             "properties": {
@@ -369,7 +316,7 @@ def register_app_tools():
             },
             "required": ["name"],
         },
-        permission_level=PermissionLevel.SAFE,
+        permission_level=PermissionLevel.CONFIRMATION_REQUIRED,
         execute_fn=close_application,
         verify_fn=verify_app_closed,
     ))

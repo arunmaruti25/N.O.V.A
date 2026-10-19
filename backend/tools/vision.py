@@ -25,12 +25,8 @@ def capture_screen(save_to_disk: bool = True, return_base64: bool = False) -> Di
             height = monitor["height"]
             sct_img = sct.grab(monitor)
             img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-    except Exception:
-        # Graceful fallback: generate desktop viewport simulation buffer (e.g. headless/service mode)
-        img = Image.new("RGB", (width, height), color=(10, 14, 23))
-        draw = ImageDraw.Draw(img)
-        draw.rectangle([20, 20, width - 20, height - 20], outline=(123, 92, 240), width=2)
-        draw.text((60, 60), "NOVA Active Desktop Context (Simulated Buffer)", fill=(241, 245, 249))
+    except Exception as exc:
+        return {"success": False, "error": f"Screen capture unavailable: {exc}", "has_base64": False, "base64_preview": "", "file_path": ""}
 
     file_path = ""
     if save_to_disk and img:
