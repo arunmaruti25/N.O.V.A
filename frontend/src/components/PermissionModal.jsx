@@ -1,211 +1,27 @@
-import { useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, ShieldAlert, X } from "lucide-react";
-import { useNova } from "../context/useNova";
-
+import { useEffect, useRef } from 'react';
+import { ShieldCheck, X } from 'lucide-react';
+import { useNova } from '../context/useNova';
 export default function PermissionModal() {
-  const { permissionState } = useNova();
-  const { isOpen, title, description, detail, onConfirm, onCancel } =
-    permissionState;
-
-  // Keyboard accessibility: Escape to cancel
-  useEffect(() => {
-    function handleKeyDown(e) {
-      if (e.key === "Escape" && isOpen && onCancel) {
-        onCancel();
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onCancel]);
-
-  if (!isOpen) return null;
-
-  return (
-    <AnimatePresence>
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          backgroundColor: "rgba(3, 4, 9, 0.78)",
-          backdropFilter: "blur(8px)",
-          WebkitBackdropFilter: "blur(8px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 10000,
-          padding: 20,
-        }}
-        onClick={onCancel}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="perm-modal-title"
-      >
-        <motion.div
-          initial={{ scale: 0.92, opacity: 0, y: 15 }}
-          animate={{ scale: 1, opacity: 1, y: 0 }}
-          exit={{ scale: 0.94, opacity: 0, y: 10 }}
-          transition={{ duration: 0.2, ease: "easeOut" }}
-          className="glass-card"
-          style={{
-            width: "100%",
-            maxWidth: 440,
-            padding: 24,
-            background: "rgba(17, 21, 32, 0.98)",
-            border: "1px solid rgba(220, 38, 38, 0.4)",
-            boxShadow: "0 0 50px rgba(220, 38, 38, 0.25), var(--shadow-modal)",
-            position: "relative",
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Close button */}
-          <button
-            type="button"
-            onClick={onCancel}
-            className="btn-icon"
-            style={{
-              position: "absolute",
-              top: 16,
-              right: 16,
-              width: 28,
-              height: 28,
-            }}
-            title="Cancel and dismiss"
-          >
-            <X size={16} />
-          </button>
-
-          {/* Warning Icon Badge */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              marginBottom: 16,
-            }}
-          >
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: "var(--radius-md)",
-                backgroundColor: "rgba(220, 38, 38, 0.15)",
-                border: "1px solid rgba(220, 38, 38, 0.35)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "var(--color-state-error)",
-                boxShadow: "0 0 16px rgba(220, 38, 38, 0.2)",
-              }}
-            >
-              <ShieldAlert size={24} />
-            </div>
-            <div>
-              <div
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 10,
-                  color: "var(--color-state-confirm)",
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                }}
-              >
-                PERMISSION AUTHORIZATION REQUIRED
-              </div>
-              <h2
-                id="perm-modal-title"
-                style={{
-                  fontFamily: "var(--font-heading)",
-                  fontSize: 18,
-                  fontWeight: 600,
-                  color: "var(--color-text-primary)",
-                  margin: 0,
-                }}
-              >
-                {title || "Confirm Action"}
-              </h2>
-            </div>
-          </div>
-
-          {/* Description */}
-          <p
-            style={{
-              fontSize: 13,
-              color: "var(--color-text-secondary)",
-              lineHeight: 1.5,
-              marginBottom: 16,
-            }}
-          >
-            {description}
-          </p>
-
-          {/* Technical Target Box */}
-          {detail && (
-            <div
-              style={{
-                background: "rgba(3, 4, 9, 0.65)",
-                border: "var(--border-subtle)",
-                borderRadius: "var(--radius-md)",
-                padding: "10px 12px",
-                marginBottom: 20,
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 8,
-              }}
-            >
-              <AlertTriangle
-                size={15}
-                color="var(--color-state-confirm)"
-                style={{ flexShrink: 0, marginTop: 2 }}
-              />
-              <div style={{ overflow: "hidden" }}>
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: "var(--color-text-tertiary)",
-                    textTransform: "uppercase",
-                    marginBottom: 2,
-                  }}
-                >
-                  Command Target:
-                </div>
-                <code
-                  style={{
-                    fontSize: 12,
-                    fontFamily: "var(--font-mono)",
-                    color: "var(--color-nova-cyan)",
-                    wordBreak: "break-all",
-                    display: "block",
-                  }}
-                >
-                  {detail}
-                </code>
-              </div>
-            </div>
-          )}
-
-          {/* Modal Buttons */}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-            <button
-              type="button"
-              onClick={onCancel}
-              className="btn btn-secondary"
-              style={{ minWidth: 100 }}
-              autoFocus
-            >
-              Decline
-            </button>
-            <button
-              type="button"
-              onClick={onConfirm}
-              className="btn btn-danger"
-              style={{ minWidth: 120 }}
-            >
-              Authorize Action
-            </button>
-          </div>
-        </motion.div>
-      </div>
-    </AnimatePresence>
-  );
+ const { permissionState } = useNova();
+ const { isOpen, title, description, detail, onConfirm, onCancel } = permissionState;
+ const dialog = useRef(null);
+ useEffect(() => {
+  if (!isOpen) return;
+  const previous = document.activeElement;
+  dialog.current?.focus();
+  const handler = e => {
+   if(e.key === 'Escape') { e.preventDefault(); onCancel?.(); }
+   if(e.key === 'Tab') {
+    const buttons = dialog.current?.querySelectorAll('button');
+    if(!buttons?.length) return;
+    const first = buttons[0], last = buttons[buttons.length-1];
+    if(e.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { e.preventDefault(); last.focus(); }
+    else if(!e.shiftKey && (document.activeElement === last || document.activeElement === dialog.current)) { e.preventDefault(); first.focus(); }
+   }
+  };
+  document.addEventListener('keydown',handler);
+  return () => { document.removeEventListener('keydown',handler); previous?.focus(); };
+ },[isOpen,onCancel]);
+ if(!isOpen) return null;
+ return <div className="permission-backdrop" onClick={onCancel}><section ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="perm-modal-title" className="permission-dialog glass-card" onClick={e => e.stopPropagation()}><div className="permission-heading"><ShieldCheck size={26} /><span>YOU’RE IN CONTROL</span><button className="icon-button" aria-label="Dismiss permission request" onClick={onCancel}><X size={18} /></button></div><h2 id="perm-modal-title">{title || 'A moment for your approval.'}</h2><p>{description}</p>{detail && <pre>{typeof detail === 'string' ? detail : JSON.stringify(detail,null,2)}</pre>}<div className="workspace-actions"><button className="btn-secondary" onClick={onCancel}>Cancel</button><button className="btn-primary" onClick={onConfirm}>Approve action</button></div></section></div>;
 }

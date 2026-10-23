@@ -1,41 +1,13 @@
-/* Global reset and foundational styles */
-:root {
-  color-scheme: dark;
-}
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-html,
-body {
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  background-color: #030409;
-  color: #f1f5f9;
-  font-family:
-    "Inter",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
-    sans-serif;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-#root {
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  display: flex;
-}
+:root { color-scheme:light; font-family:'Inter','Segoe UI',sans-serif; color:#333139; background:#f7f6f3; font-synthesis:none; text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased; }
+*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+html,body,#root { width:100%; height:100%; overflow:hidden; }
+button,input,textarea,select { font:inherit; }
+button { cursor:pointer; }
+button:disabled { cursor:not-allowed; opacity:.42; }
+button,a,input,textarea,select { -webkit-tap-highlight-color:transparent; }
+button { color:inherit; }
+a { color:#75628c; }
+button:focus-visible,a:focus-visible,summary:focus-visible { outline:2px solid #8d75ac; outline-offset:4px; }
+input:focus-visible,textarea:focus-visible,select:focus-visible { outline:2px solid #9c83ba; outline-offset:3px; }
+::selection { background:#e5d8ee; }
+::-webkit-scrollbar { width:5px; height:4px; } ::-webkit-scrollbar-thumb { background:#d5cfd5; border-radius:10px; }

@@ -1,259 +1,79 @@
-import { motion } from "framer-motion";
-import {
-  Eye,
-  Globe,
-  Monitor,
-  Cpu,
-  Activity,
-  ShieldCheck,
-  Zap,
-} from "lucide-react";
-import NovaCore from "../components/NovaCore";
-import VoiceBar from "../components/VoiceBar";
-import { useNova } from "../context/useNova";
+﻿import { ArrowRight, BookOpen, Clock3, Code2, FileSearch, FolderOpen, Globe, Layers3, Leaf, MessageSquare, Monitor, Music2, RefreshCw, Search, ShieldCheck, Sparkles, Sun, Workflow, Zap } from 'lucide-react';
+import NovaCore from '../components/NovaCore';
+import VoiceBar from '../components/VoiceBar';
+import { useNova } from '../context/useNova';
+
+const appShortcuts = [
+  { name: 'VS Code', icon: Code2, command: 'open VS Code', tone: 'blue' },
+  { name: 'Notepad', icon: BookOpen, command: 'open Notepad', tone: 'violet' },
+  { name: 'Music', icon: Music2, command: 'open Spotify', tone: 'green' },
+  { name: 'Chrome', icon: Globe, command: 'open Chrome', tone: 'peach' },
+  { name: 'Files', icon: FolderOpen, command: 'open Downloads', tone: 'peach' },
+  { name: 'Terminal', icon: Monitor, command: 'open terminal', tone: 'blue' },
+];
+const ideas = [
+  { title: 'Morning, made simple', detail: 'Open Chrome and Notepad', command: 'open Chrome and open Notepad', icon: Sun, tone: 'peach' },
+  { title: 'Find your next thought', detail: 'Search your documents for PDFs', command: 'search files for *.pdf', icon: FileSearch, tone: 'violet' },
+  { title: 'A quieter workspace', detail: 'Set your system volume to 20%', command: 'set volume to 20', icon: Music2, tone: 'pink' },
+];
+
+function PanelHeading({ icon: Icon, title, action, onClick }) {
+  return <div className="spatial-panel-heading"><h2><Icon size={19} strokeWidth={1.7} />{title}</h2>{action && <button className="panel-link" onClick={onClick}>{action}<ArrowRight size={13} /></button>}</div>;
+}
+
+function HealthGauge({ label, value, tone }) {
+  const available = typeof value === 'number' && Number.isFinite(value);
+  const percent = available ? Math.max(0, Math.min(100, value)) : 0;
+  return <div className={`health-gauge ${tone}`}><div className="gauge-dial"><svg viewBox="0 0 100 100" aria-hidden="true"><circle className="gauge-track" cx="50" cy="50" r="41" /><circle className="gauge-value" cx="50" cy="50" r="41" strokeDasharray={`${percent * 2.576} 257.6`} /></svg><span>{available ? `${Math.round(value)}%` : <span aria-label="Not available">&mdash;</span>}</span></div><span className="gauge-label">{label}</span></div>;
+}
 
 export default function HomeView() {
-  const { setCurrentView, activeModel } = useNova();
+  const { setCurrentView, isBackendConnected, activities, memories, tools, systemStatus, request, triggerVoiceCommand, busy, currentTask, status, statusDetail } = useNova();
+  const metrics = isBackendConnected && systemStatus?.system && !systemStatus.system.error ? systemStatus.system : null;
+  const canRun = isBackendConnected && !busy;
+  const launchAvailable = tools.some(tool => tool.name === 'app.launch');
+  const run = command => { if (triggerVoiceCommand(command)) setCurrentView('chat'); };
 
-  const quickActions = [
-    {
-      title: "Capture Screen",
-      desc: "Local monitor preview",
-      badge: "VISION HUD",
-      icon: Eye,
-      color: "var(--color-nova-cyan)",
-      bgGradient:
-        "linear-gradient(135deg, rgba(34, 211, 238, 0.15) 0%, rgba(14, 116, 144, 0.05) 100%)",
-      borderColor: "rgba(34, 211, 238, 0.3)",
-      action: () => setCurrentView("vision"),
-    },
-    {
-      title: "Web Intelligence",
-      desc: "Real-time research & synthesis",
-      badge: "LIVE WEB",
-      icon: Globe,
-      color: "var(--color-nova-secondary)",
-      bgGradient:
-        "linear-gradient(135deg, rgba(91, 141, 239, 0.15) 0%, rgba(30, 58, 138, 0.05) 100%)",
-      borderColor: "rgba(91, 141, 239, 0.3)",
-      action: () => setCurrentView("web"),
-    },
-    {
-      title: "Computer Control",
-      desc: "Windows system orchestration",
-      badge: "SYSTEM API",
-      icon: Monitor,
-      color: "#34d399",
-      bgGradient:
-        "linear-gradient(135deg, rgba(52, 211, 153, 0.15) 0%, rgba(6, 78, 59, 0.05) 100%)",
-      borderColor: "rgba(52, 211, 153, 0.3)",
-      action: () => setCurrentView("computer"),
-    },
-    {
-      title: "Skills Hub",
-      desc: "Tool plugins & permissions",
-      badge: "EXTENSIBLE",
-      icon: Cpu,
-      color: "var(--color-text-accent)",
-      bgGradient:
-        "linear-gradient(135deg, rgba(167, 139, 250, 0.15) 0%, rgba(76, 29, 149, 0.05) 100%)",
-      borderColor: "rgba(167, 139, 250, 0.3)",
-      action: () => setCurrentView("skills"),
-    },
-  ];
+  return <section className="spatial-home" aria-label="Your NOVA workspace">
+    <div className="spatial-topline"><span><Sparkles size={12} /> YOUR DAY, WITH A LITTLE MORE POSSIBILITY.</span><span>PERSONAL SPACE <i /> 01</span></div>
+    <div className="spatial-grid">
+      <aside className="spatial-column left-column">
+        <section className="spatial-panel recent-panel">
+          <PanelHeading icon={Clock3} title="Recent commands" action="See all" onClick={() => setCurrentView('activity')} />
+          {activities.length ? <div className="recent-commands">{activities.slice(0, 4).map(activity => <button className="recent-command" key={activity.id} onClick={() => setCurrentView('activity')}><span className={`tile-icon ${activity.status === 'error' ? 'pink' : 'violet'}`}><Zap size={17} /></span><span><strong>{activity.action}</strong><small>{activity.status === 'error' ? 'Failed' : activity.verified ? 'Verified' : 'Recorded on your host'}</small></span><time>{activity.time}</time></button>)}</div> : <div className="recent-empty"><span className="empty-orbit"><Clock3 size={25} strokeWidth={1.3} /></span><h3>A fresh start.</h3><p>Your commands will find<br />their place here.</p><button className="panel-link" onClick={() => setCurrentView('chat')}>Start a conversation <ArrowRight size={13} /></button></div>}
+        </section>
+        <section className="spatial-panel apps-panel">
+          <PanelHeading icon={Layers3} title="Your app launchpad" action="Tools" onClick={() => setCurrentView('skills')} />
+          <div className="apps-grid">{appShortcuts.map(({ name, icon: Icon, command, tone }) => <button key={name} className="app-tile" onClick={() => run(command)} disabled={!canRun} aria-label={`Launch ${name} on your Windows host`} title={`Ask NOVA to open ${name}`}><span className={`tile-icon ${tone}`}><Icon size={27} strokeWidth={1.7} /></span><span>{name}</span></button>)}</div>
+          <div className="panel-footnote"><span className={`status-dot ${isBackendConnected && launchAvailable ? 'connected' : ''}`} /><span>{isBackendConnected ? launchAvailable ? 'Host app launcher available' : 'App launcher not registered' : 'Connect your Windows host to launch apps'}</span></div>
+        </section>
+      </aside>
 
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "20px 24px",
-        position: "relative",
-        overflowY: "auto",
-        overflowX: "hidden",
-        gap: 22,
-      }}
-    >
-      {/* Central NOVA Core Orb Hero Zone */}
-      <motion.div
-        initial={{ scale: 0.94, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 0.35, ease: "easeOut" }}
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          marginTop: 6,
-        }}
-      >
-        <NovaCore size={210} />
-      </motion.div>
+      <div className="spatial-center">
+        <div className="spatial-core-stage"><div className="core-aura" /><div className="core-orbit orbit-one" /><div className="core-orbit orbit-two" /><span className="orbit-bead bead-one" /><span className="orbit-bead bead-two" /><NovaCore size={510} /><span className="core-state"><span className={`status-dot ${isBackendConnected ? 'connected' : ''}`} />{isBackendConnected ? status.toLowerCase() : 'Your space is ready'}</span></div>
+        <div className="spatial-welcome"><span className="welcome-eyebrow">A LITTLE INTELLIGENCE. ENDLESS POSSIBILITY.</span><h1>What can I do for you <em>today?</em></h1><p>Your personal AI assistant. A little more focus, a little more flow.</p></div>
+        <div className="spatial-command"><VoiceBar /><div className="spatial-quick-actions"><button disabled={!canRun} onClick={() => run('open VS Code')}><Code2 size={16} />Open VS Code</button><button onClick={() => setCurrentView('files')}><Search size={16} />Search files</button><button onClick={() => setCurrentView('vision')}><Monitor size={16} />My screen</button></div></div>
+      </div>
 
-      {/* Voice Interaction & Input Command Area */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, delay: 0.08 }}
-        style={{ width: "100%", display: "flex", justifyContent: "center" }}
-      >
-        <VoiceBar />
-      </motion.div>
-
-      {/* Polished Quick Action Launchpad Grid */}
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, delay: 0.15 }}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-          gap: 12,
-          width: "100%",
-          maxWidth: 860,
-        }}
-      >
-        {quickActions.map((act) => {
-          const Icon = act.icon;
-          return (
-            <motion.button
-              key={act.title}
-              type="button"
-              onClick={act.action}
-              whileHover={{ y: -3, scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              className="glass-card"
-              style={{
-                padding: "14px 16px",
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-                cursor: "pointer",
-                textAlign: "left",
-                border: `1px solid ${act.borderColor}`,
-                background: act.bgGradient,
-                position: "relative",
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: "var(--radius-md)",
-                    background: "rgba(255, 255, 255, 0.06)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.3)",
-                  }}
-                >
-                  <Icon size={18} color={act.color} />
-                </div>
-
-                <span
-                  style={{
-                    fontSize: 9,
-                    fontFamily: "var(--font-mono)",
-                    color: act.color,
-                    letterSpacing: "0.08em",
-                    background: "rgba(255, 255, 255, 0.04)",
-                    padding: "2px 6px",
-                    borderRadius: 4,
-                  }}
-                >
-                  {act.badge}
-                </span>
-              </div>
-
-              <div>
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: "var(--color-text-primary)",
-                    fontFamily: "var(--font-heading)",
-                    marginBottom: 2,
-                  }}
-                >
-                  {act.title}
-                </div>
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: "var(--color-text-secondary)",
-                    lineHeight: 1.35,
-                  }}
-                >
-                  {act.desc}
-                </div>
-              </div>
-            </motion.button>
-          );
-        })}
-      </motion.div>
-
-      {/* Bottom Telemetry & Status Bar */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.4, delay: 0.22 }}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 18,
-          fontSize: 11,
-          fontFamily: "var(--font-mono)",
-          color: "var(--color-text-tertiary)",
-          padding: "6px 16px",
-          borderRadius: "var(--radius-full)",
-          background: "rgba(255, 255, 255, 0.02)",
-          border: "var(--border-subtle)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <Zap size={12} color="var(--color-nova-cyan)" />
-          <span>
-            INFERENCE: {activeModel.provider.toUpperCase()} (
-            {activeModel.latency})
-          </span>
-        </div>
-        <div
-          style={{
-            width: 4,
-            height: 4,
-            borderRadius: "50%",
-            backgroundColor: "rgba(255, 255, 255, 0.15)",
-          }}
-        />
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <ShieldCheck size={12} color="var(--color-state-success)" />
-          <span>SAFETY SHIELD: ACTIVE</span>
-        </div>
-        <div
-          style={{
-            width: 4,
-            height: 4,
-            borderRadius: "50%",
-            backgroundColor: "rgba(255, 255, 255, 0.15)",
-          }}
-        />
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <Activity size={12} color="var(--color-nova-primary)" />
-          <span>WINDOWS IPC: READY</span>
-        </div>
-      </motion.div>
+      <aside className="spatial-column right-column">
+        <section className="spatial-panel health-panel">
+          <div className="spatial-panel-heading"><h2><Workflow size={19} strokeWidth={1.7} />System health</h2><button className="health-refresh" disabled={!canRun} onClick={() => request('SYSTEM_STATUS')} aria-label="Refresh system readings" title="Read current system status"><RefreshCw size={13} />{metrics ? 'Refresh' : 'Read host'}</button></div>
+          <div className="health-gauges"><HealthGauge label="CPU" value={metrics?.cpu_percent} tone="violet" /><HealthGauge label="Memory" value={metrics?.memory_percent} tone="peach" /><HealthGauge label="Disk" value={metrics?.disk_percent} tone="pink" /></div>
+          <button className="health-summary" onClick={() => setCurrentView('computer')}><span className="tile-icon green">{metrics ? <Leaf size={19} /> : <ShieldCheck size={19} />}</span><span><strong>{metrics ? 'Your host, at a glance' : 'Your computer. Your control.'}</strong><small>{metrics ? 'Last requested readings. Refresh for an update.' : isBackendConnected ? 'Read your host for current system information.' : 'System readings appear when connected.'}</small></span><ArrowRight size={14} /></button>
+        </section>
+        <section className="spatial-panel automations-panel">
+          <PanelHeading icon={Zap} title="Automations" action="Explore" onClick={() => setCurrentView('automations')} />
+          {currentTask && <button className="current-workflow" onClick={() => setCurrentView('automations')}><span className="status-dot connected" /><span>{currentTask.description || 'Current workflow'}</span><small>{currentTask.status}</small></button>}
+          <div className="automation-ideas">{ideas.map(({ title, detail, command, icon: Icon, tone }) => <button key={title} disabled={!canRun} onClick={() => run(command)} className="automation-idea"><span className={`tile-icon ${tone}`}><Icon size={19} strokeWidth={1.6} /></span><span><strong>{title}</strong><small>{detail}</small></span><ArrowRight size={14} /></button>)}</div>
+          <span className="automation-caption">Thoughtful starting points. Run when you choose.</span>
+        </section>
+      </aside>
     </div>
-  );
+
+    <section className="spatial-panel memory-panel">
+      <PanelHeading icon={BookOpen} title="Memory" action="See all" onClick={() => setCurrentView('memory')} />
+      <div className="memory-content"><button className="memory-intro" onClick={() => setCurrentView('memory')}><span className="memory-art" aria-hidden="true"><i /><i /><i /><i /></span><span><strong>NOVA remembers.<br />So you can move forward.</strong><small>Your preferences, projects, and little details.<br />A little continuity for everything you do.</small></span></button><div className="memory-notes">{memories.length ? memories.slice(0, 3).map((memory, index) => <button className="memory-note" key={memory.id} onClick={() => setCurrentView('memory')}><span className={`tile-icon ${['peach', 'violet', 'pink'][index]}`}><BookOpen size={17} /></span><span>{memory.text}</span><small>{memory.category}</small></button>) : <button className="memory-empty" onClick={() => setCurrentView('memory')}><span className="tile-icon violet"><MessageSquare size={22} strokeWidth={1.5} /></span><span><strong>Good things are worth remembering.</strong><small>Add your first memory and make this space yours.</small></span><ArrowRight size={16} /></button>}</div></div>
+    </section>
+    <p className="spatial-availability"><span className={`status-dot ${isBackendConnected ? 'connected' : ''}`} />{isBackendConnected ? statusDetail || 'Connected to your Windows host' : 'Your Windows host is offline. Your memories, tools, and readings will appear when connected.'}</p>
+  </section>;
 }

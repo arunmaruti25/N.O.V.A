@@ -7,7 +7,6 @@ from backend.task_manager import task_manager, TaskManager, TaskStatus, TaskCont
 from backend.tools.planner import classify_task_control_intent, plan_task_from_natural_language
 from backend.orchestrator import orchestrate_task, execute_task_context
 from backend.permissions import evaluate_tool_permission, PermissionLevel
-from backend.main import manager
 
 class NovaTurnTakingAndTaskManagerTests(unittest.TestCase):
     """

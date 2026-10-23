@@ -1,0 +1,26 @@
+import { useEffect, useRef, useState } from 'react';
+import { AudioLines, Workflow, FolderSearch, Sparkles, Copy, Check, ArrowDown, Circle } from 'lucide-react';
+import WorkspacePage from '../components/WorkspacePage';
+import VoiceBar from '../components/VoiceBar';
+import NovaCore from '../components/NovaCore';
+import { useNova } from '../context/useNova';
+const presets = ['Open Notepad and set volume to 30', 'Search files for *.pdf', 'Open Downloads'];
+export default function AssistantView() {
+ const { currentView, messages, currentTask, status, statusDetail, triggerVoiceCommand, isBackendConnected, busy, activities } = useNova();
+ const [query,setQuery] = useState('');
+ const [copied,setCopied] = useState(null);
+ const endRef = useRef(null);
+ useEffect(() => { endRef.current?.scrollIntoView({ block:'nearest' }); }, [messages.length]);
+ const titles = { chat:['A space to think.','Bring a question, an idea, or your next big thing.'], voice:['A more natural conversation.','Push to talk. NOVA listens through the microphone on your Windows host.'], automations:['Less repetition. More possibility.','Describe a workflow. Follow every step as NOVA carries it out.'], files:['Everything, in its place.','Find, read, and open files on the computer running NOVA.'] };
+ const [title,desc] = titles[currentView];
+ return <WorkspacePage title={title} description={desc}>
+  {currentView === 'voice' ? <div className="voice-experience"><NovaCore size={340} /><span className="badge"><AudioLines size={14} /> {status.toLowerCase()}</span><p aria-live="polite">{statusDetail}</p><p className="muted">Ctrl + Shift + N to talk · Escape to interrupt</p></div> : null}
+  {currentView === 'automations' && <><div className="workflow-path">{[[Sparkles,'Describe your goal'],[Workflow,'NOVA plans the steps'],[Check,'Review the outcome']].map(([Icon,label],i) => <div key={label}><span className="workflow-number">0{i+1}</span><Icon size={24} strokeWidth={1.3} /><h2>{label}</h2><p>{['Tell NOVA what you’d like done.','Execution follows backend permissions.','Results appear after host confirmation.'][i]}</p></div>)}</div>{currentTask ? <article className="glass-card workspace-card"><span className="badge">{currentTask.status}</span><h2>{currentTask.description || 'Current workflow'}</h2><p>Step {currentTask.current_step || 0} of {currentTask.total_steps || '—'}</p><progress value={currentTask.current_step || 0} max={currentTask.total_steps || 1} aria-label="Workflow progress" /></article> : <div className="empty-state"><Workflow size={28} /><p>Your next workflow starts with a sentence.</p><div className="suggestion-row">{presets.map(text => <button disabled={!isBackendConnected || busy} key={text} onClick={() => triggerVoiceCommand(text)}>{text}</button>)}</div></div>}</>}
+  {currentView === 'files' && <><form className="file-search glass-card" onSubmit={e => { e.preventDefault(); if(query.trim()) triggerVoiceCommand(`search files for ${query.trim()}`); }}><FolderSearch size={24} /><label>Find a file<input placeholder="A filename or pattern, like *.pdf" value={query} onChange={e => setQuery(e.target.value)} required /></label><button className="btn-primary" disabled={!isBackendConnected || busy || !query.trim()}>Search files</button></form><p className="muted">File requests use the existing assistant tools. Results appear below; files are never simulated.</p></>}
+  {currentView === 'chat' && messages.length === 0 && <div className="empty-state chat-empty"><span className="empty-symbol">&#10035;</span><h2>Good things begin with a thought.</h2><p>What shall we explore together?</p></div>}
+  {messages.length > 0 && <div className="conversation" aria-label="Conversation">{messages.map(message => <article key={message.id} className={`message ${message.role}`}><span className="message-avatar">{message.role === 'user' ? 'Y' : '\u2733'}</span><div><span className="message-label">{message.role === 'user' ? 'You' : 'NOVA'} {message.model && <small>· {message.model}</small>}</span><p>{message.text}</p>{message.toolOutput != null && <details className="tool-output"><summary>Tool execution details</summary><pre>{typeof message.toolOutput === 'string' ? message.toolOutput : JSON.stringify(message.toolOutput,null,2)}</pre></details>}{message.role !== 'user' && <button className="text-link copy-button" onClick={async () => { try { await navigator.clipboard.writeText(message.text); setCopied(message.id); } catch { setCopied(null); } }} aria-label="Copy response">{copied === message.id ? <Check size={13} /> : <Copy size={13} />} {copied === message.id ? 'Copied' : 'Copy response'}</button>}</div></article>)}<div ref={endRef} /></div>}
+  {busy && <div className="processing-status" role="status"><Circle size={12} />{statusDetail || status.toLowerCase()}</div>}
+  {currentView === 'automations' && activities.length > 0 && <details className="tool-output"><summary>Execution history · {activities.length} events</summary>{activities.slice(0,10).map(a => <p key={a.id}>{a.action} · {a.detail} · {a.status || a.result || 'Recorded'}</p>)}</details>}
+  <div className="assistant-composer"><VoiceBar showResponse={false} /><span className="muted composer-note"><ArrowDown size={12} /> Windows actions run on your connected host.</span></div>
+ </WorkspacePage>;
+}

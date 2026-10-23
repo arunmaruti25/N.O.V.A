@@ -24,6 +24,7 @@ export function NovaProvider({ children }) {
   const [speechEnabled, setSpeechEnabled] = usePreference("speechEnabled", false);
   const [reducedMotion, setReducedMotion] = usePreference("reducedMotion", false);
   const [transcript, setTranscript] = useState("");
+  const [messages, setMessages] = useState([]);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
   const [currentTask, setCurrentTask] = useState(null);
   const [permissionState, setPermissionState] = useState({ isOpen: false });
@@ -77,7 +78,10 @@ export function NovaProvider({ children }) {
         try { message = JSON.parse(data); } catch { return; }
         const { type, payload: p = {} } = message;
         if (type === "STATE_CHANGE") { setStatus(p.status); setStatusDetail(p.detail || ""); }
-        else if (type === "TRANSCRIPT" || type === "ASSISTANT_RESPONSE") setTranscript(p.text || "");
+        else if (type === "TRANSCRIPT" || type === "ASSISTANT_RESPONSE") {
+          setTranscript(p.text || "");
+          if (p.text) setMessages(prev => [...prev.slice(-99), { id: crypto.randomUUID(), role: type === "TRANSCRIPT" ? "user" : "assistant", text: p.text, model: p.model, toolOutput: p.tool_output }]);
+        }
         else if (type === "MEMORY_SYNC") setMemories(p.memories || []);
         else if (type === "SKILLS_SYNC") setTools(p.tools || []);
         else if (type === "MODEL_CONFIG") setModelConfig(p.models || []);
@@ -126,8 +130,13 @@ export function NovaProvider({ children }) {
       if (/^(?:nova[, ]+)?(?:stop|cancel)(?: task)?[.!]?$/i.test(command)) return send("INTERRUPT");
       if (/^(?:nova[, ]+)?pause(?: task)?[.!]?$/i.test(command)) return send("TASK_PAUSE");
       if (/^(?:nova[, ]+)?resume(?: task)?[.!]?$/i.test(command)) return request("TASK_RESUME");
-      if (request("USER_INPUT", { text: command })) setTranscript(command);
-    } else request("START_LISTENING");
+      if (request("USER_INPUT", { text: command })) {
+        setTranscript(command);
+        setMessages(prev => [...prev.slice(-99), { id: crypto.randomUUID(), role: "user", text: command }]);
+        return true;
+      }
+      return false;
+    } else return request("START_LISTENING");
   }, [request, send]);
   const cancelOperation = useCallback(() => { send("INTERRUPT"); setPermissionState({ isOpen: false }); }, [send]);
   const pauseTask = useCallback((task_id) => send("TASK_PAUSE", { task_id }), [send]);
@@ -140,7 +149,7 @@ export function NovaProvider({ children }) {
     currentView, setCurrentView, sidebarCollapsed, setSidebarCollapsed, isMiniMode, setIsMiniMode,
     activeModel, setActiveModel, isAutoRouting, setIsAutoRouting, availableModels,
     speechEnabled, setSpeechEnabled, reducedMotion, setReducedMotion,
-    isListening: status === "LISTENING", transcript, setTranscript, waveformBars: [0.2, 0.4, 0.7, 0.4, 0.2],
+    isListening: status === "LISTENING", transcript, setTranscript, messages, waveformBars: [0.2, 0.4, 0.7, 0.4, 0.2],
     permissionState, notifications, addNotification, removeNotification, activities, addActivity,
     triggerVoiceCommand, cancelOperation, isBackendConnected, currentTask, pauseTask, resumeTask, cancelTask,
     request, send, busy, memories, tools, systemStatus, webResult, visionResult,
