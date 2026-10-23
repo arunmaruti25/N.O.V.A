@@ -33,6 +33,7 @@ class Session:
         self.pending = None
         self.conversation = []
         self.closed = False
+        self.owns_desktop = False
 
     async def send(self, event, payload):
         if not self.closed:
@@ -58,6 +59,10 @@ class Session:
         if not isinstance(event, dict) or not isinstance(event.get("payload", {}), dict):
             return await self.error("Invalid event: expected an object and an object payload.")
         kind, payload = event.get("type"), event.get("payload", {})
+        if not isinstance(kind, str):
+            return await self.error("Event type must be a string.")
+        if payload.get("task_id") is not None and not isinstance(payload["task_id"], str):
+            return await self.error("Task ID must be a string.")
         if kind == "USER_INPUT" and isinstance(payload.get("text"), str):
             control = classify_task_control_intent(strip_assistant_prefix(payload["text"]))
             if control:
@@ -70,8 +75,9 @@ class Session:
             task = self.tasks.request_cancel(payload.get("task_id"))
             self.pending = None
             # Only the owner may interrupt the shared speaker.
-            if self.busy():
-                tts_manager.stop_playback()
+            if self.busy() and not self.worker.cancelling():
+                if self.owns_desktop:
+                    tts_manager.stop_playback()
                 self.worker.cancel()
             return await self.send("TASK_CANCELLED", {"task_id": task.task_id if task else None,
                 "status": "CANCELLED", "description": "Cancellation requested. The current atomic action may finish."})
@@ -123,6 +129,8 @@ class Session:
         model = payload.get("model", "auto")
         if not isinstance(model, str):
             return await self.error("Model must be a string.")
+        if model.lower() not in {"auto", "gemini", "groq", "nvidia", "ollama"}:
+            return await self.error("Unknown model provider.")
         text = payload.get("text", "")
         if not isinstance(text, str) or len(text) > 16000:
             return await self.error("Command must be text, up to 16,000 characters.")
@@ -130,6 +138,7 @@ class Session:
         token = private_mode.set(local)
         try:
             async with self.desktop_lock:
+                self.owns_desktop = True
                 await self.send("STATE_CHANGE", {"status": "PROCESSING", "detail": "Working on your request"})
                 if kind == "SYSTEM_STATUS":
                     system, volume = await asyncio.gather(asyncio.to_thread(get_system_info), asyncio.to_thread(get_system_volume))
@@ -197,6 +206,7 @@ class Session:
         except Exception as exc:
             await self.error(str(exc))
         finally:
+            self.owns_desktop = False
             private_mode.reset(token)
 
     async def finish(self, result, speak=False):
@@ -209,16 +219,22 @@ class Session:
             await self.send({"PAUSED": "TASK_PAUSED", "CANCELLED": "TASK_CANCELLED", "ERROR": "TASK_FAILED"}[status], {"task_id": result["task_id"], "description": text, "error": text})
         await self.send("MEMORY_SYNC", {"memories": await list_memories()})
         await self.send("ACTIVITY_LOG", {"action": result.get("action", "Request"), "detail": text,
-                        "type": "system", "status": "error" if status == "ERROR" else "success"})
+                        "type": "system", "status": "error" if status == "ERROR" else status.lower()})
         if status == "ERROR":
             return await self.error(text)
         if status == "SUCCESS" and speak and not private_mode.get():
             await self.send("STATE_CHANGE", {"status": "SPEAKING", "detail": "Preparing speech"})
-            audio = await asyncio.wait_for(tts_manager.synthesize(text[:4000]), timeout=30)
-            path = Path(audio["audio_path"]) if audio.get("audio_path") else None
+            try:
+                audio = await asyncio.wait_for(tts_manager.synthesize(text[:4000]), timeout=30)
+            except (TimeoutError, OSError):
+                audio = {"success": False, "error": "Speech service timed out or could not create audio."}
+            audio_path = audio.get("file_path") or audio.get("audio_path")
+            path = Path(audio_path) if audio.get("success") and audio_path else None
             if path:
                 try:
-                    await tts_manager.play_audio_async(path, cancel_event=self.cancel_event)
+                    played = await tts_manager.play_audio_async(path, cancel_event=self.cancel_event)
+                    if not played and not self.cancel_event.is_set():
+                        await self.send("NOTIFICATION", {"type": "info", "title": "Playback unavailable", "message": "Read the text response instead."})
                 finally:
                     tts_manager.stop_playback()
                     path.unlink(missing_ok=True)
@@ -231,7 +247,9 @@ class Session:
         self.cancel_event.set()
         self.tasks.request_cancel()
         if self.busy():
-            tts_manager.stop_playback()
-            self.worker.cancel()
+            if self.owns_desktop:
+                tts_manager.stop_playback()
+            if not self.worker.cancelling():
+                self.worker.cancel()
             with suppress(asyncio.CancelledError):
                 await self.worker

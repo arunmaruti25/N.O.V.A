@@ -80,35 +80,23 @@ def parse_llm_tool_calls(text: str) -> Optional[List[Dict[str, Any]]]:
     if not data or not isinstance(data, dict):
         return None
 
+    raw_steps = data.get("steps", [data])
+    if not isinstance(raw_steps, list) or not raw_steps:
+        return None
     steps = []
-    # 1. Multi-step list
-    if "steps" in data and isinstance(data["steps"], list):
-        for s in data["steps"]:
-            if isinstance(s, dict):
-                raw_name = s.get("tool") or s.get("name") or s.get("function") or s.get("action")
-                matched_tool = normalize_tool_name(raw_name)
-                args = s.get("arguments") or s.get("parameters") or s.get("args") or {}
-                if matched_tool:
-                    steps.append({
-                        "tool": matched_tool,
-                        "arguments": args if isinstance(args, dict) else {},
-                        "thought": data.get("thought", ""),
-                    })
-        if steps:
-            return steps
+    for step in raw_steps:
+        if not isinstance(step, dict):
+            return None
+        name = normalize_tool_name(step.get("tool") or step.get("name") or step.get("function") or step.get("action"))
+        arguments = step.get("arguments", step.get("parameters", step.get("args", {})))
+        if not name or not isinstance(arguments, dict):
+            return None
+        valid, _ = tool_registry.validate_arguments(tool_registry.get(name), arguments)
+        if not valid:
+            return None
+        steps.append({"tool": name, "arguments": arguments, "thought": step.get("thought", "")})
+    return steps
 
-    # 2. Single tool invocation
-    raw_name = data.get("tool") or data.get("name") or data.get("function") or data.get("action")
-    matched_tool = normalize_tool_name(raw_name)
-    if matched_tool:
-        args = data.get("arguments") or data.get("parameters") or data.get("args") or {}
-        return [{
-            "tool": matched_tool,
-            "arguments": args if isinstance(args, dict) else {},
-            "thought": data.get("thought", ""),
-        }]
-
-    return None
 
 def build_tool_system_prompt() -> str:
     """

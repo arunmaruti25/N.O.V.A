@@ -1,0 +1,24 @@
+﻿# Runtime dependencies verified against the existing Windows Python 3.14 environment.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+httpx==0.28.1
+python-dotenv==1.2.3
+aiosqlite==0.22.1
+google-genai==2.20.0
+groq==1.7.0
+openai==3.8.0
+psutil==7.2.2
+numpy==2.5.3
+pillow==12.3.0
+sounddevice==0.5.6
+SpeechRecognition==3.17.0
+pygame-ce==2.5.8
+edge-tts==7.2.8
+PyAutoGUI==0.9.54
+pyperclip==1.11.0
+pywinauto==0.6.9
+pywin32==312; sys_platform == 'win32'
+pycaw==20251023; sys_platform == 'win32'
+uiautomation==2.0.29; sys_platform == 'win32'
+mss==10.2.0
+ddgs==9.16.0

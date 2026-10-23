@@ -206,18 +206,18 @@ class TTSManager:
             return {"success": False, "disabled": True, "error": "Cloud speech is disabled in local mode."}
         target_path = AUDIO_CACHE_DIR / f"{uuid.uuid4().hex}-{Path(output_filename).name}"
 
-        # 1. Attempt Primary: Fish Speech S2 / S2 Pro
-        res = await self.primary_engine.synthesize(text, target_path)
-        if res.get("success"):
+        completed = False
+        try:
+            res = await self.primary_engine.synthesize(text, target_path)
+            if not res.get("success"):
+                primary_error = res.get("error", "Unknown error")
+                res = await self.fallback_engine.synthesize(text, target_path)
+                res.update(fallback_used=True, primary_engine=self.primary_engine.name, primary_error=primary_error)
+            completed = bool(res.get("success"))
             return res
-
-        # Primary failed or unconfigured; record reason and use fallback
-        primary_err = res.get("error", "Unknown error")
-        fallback_res = await self.fallback_engine.synthesize(text, target_path)
-        fallback_res["fallback_used"] = True
-        fallback_res["primary_engine"] = self.primary_engine.name
-        fallback_res["primary_error"] = primary_err
-        return fallback_res
+        finally:
+            if not completed:
+                target_path.unlink(missing_ok=True)
 
     def is_playing(self) -> bool:
         """Check if audio is currently playing."""
@@ -297,6 +297,7 @@ class VoiceInputManager:
 
     def __init__(self):
         self.recognizer = sr.Recognizer()
+        self.recognizer.operation_timeout = 15
         self.recognizer.energy_threshold = 300
         self.recognizer.dynamic_energy_threshold = True
 

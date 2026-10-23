@@ -181,7 +181,9 @@ def copy_file(source: str, destination: str) -> Dict[str, Any]:
 
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        with src.open("rb") as source_file, dst.open("xb") as destination_file:
+            shutil.copyfileobj(source_file, destination_file)
+        shutil.copystat(src, dst)
         return {"success": True, "source": str(src), "destination": str(dst), "message": f"Copied to {dst}."}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -198,6 +200,8 @@ def move_file(source: str, destination: str) -> Dict[str, Any]:
 
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.exists():
+            return {"success": False, "error": "Destination already exists; choose a new path."}
         shutil.move(src, dst)
         return {"success": True, "source": str(src), "destination": str(dst), "message": f"Moved to {dst}."}
     except Exception as e:

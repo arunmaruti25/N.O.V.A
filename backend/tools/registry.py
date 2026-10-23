@@ -1,6 +1,7 @@
 import time
 import asyncio
 import inspect
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Callable, List, Tuple
@@ -105,6 +106,8 @@ class ToolRegistry:
         # Type checks and security checks
         properties = schema.get("properties", {})
         for key, val in arguments.items():
+            if key not in properties:
+                return False, f"Unknown parameter '{key}' for tool '{tool.name}'"
             if key in properties:
                 prop_spec = properties[key]
                 expected_type = prop_spec.get("type")
@@ -118,6 +121,18 @@ class ToolRegistry:
                     return False, f"Parameter '{key}' must be boolean, got {type(val).__name__}"
                 elif expected_type == "array" and not isinstance(val, list):
                     return False, f"Parameter '{key}' must be array, got {type(val).__name__}"
+                if "enum" in prop_spec and val not in prop_spec["enum"]:
+                    return False, f"Parameter '{key}' is not an allowed value"
+                if isinstance(val, (int, float)) and not isinstance(val, bool):
+                    if not math.isfinite(val):
+                        return False, f"Parameter '{key}' must be finite"
+                    if "minimum" in prop_spec and val < prop_spec["minimum"]:
+                        return False, f"Parameter '{key}' is below its minimum"
+                    if "maximum" in prop_spec and val > prop_spec["maximum"]:
+                        return False, f"Parameter '{key}' exceeds its maximum"
+                if isinstance(val, list) and prop_spec.get("items", {}).get("type") == "string":
+                    if not all(isinstance(item, str) for item in val):
+                        return False, f"Parameter '{key}' must contain strings"
 
             # Security sanitization on all string values
             if isinstance(val, str):
@@ -166,7 +181,9 @@ class ToolRegistry:
             )
 
         # 2. Permission Check
-        if tool.permission_level == PermissionLevel.BLOCKED:
+        from ..permissions import evaluate_tool_permission
+        permission = evaluate_tool_permission(name, arguments, registry=self)
+        if permission.level == PermissionLevel.BLOCKED:
             return ToolResult(
                 success=False,
                 tool=name,
@@ -174,7 +191,7 @@ class ToolRegistry:
                 verified=False,
             )
 
-        if tool.permission_level == PermissionLevel.CONFIRMATION_REQUIRED and not pre_authorized:
+        if permission.level == PermissionLevel.CONFIRMATION_REQUIRED and not pre_authorized:
             return ToolResult(
                 success=False,
                 tool=name,

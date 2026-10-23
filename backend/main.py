@@ -4,13 +4,14 @@ import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .memory import init_db
 from .session import Session
+from .router import discover_models
 
 
 @asynccontextmanager
@@ -18,9 +19,11 @@ async def lifespan(app):
     await init_db()
     app.state.desktop_lock = asyncio.Lock()
     app.state.connections = set()
-    yield
-    for session in tuple(app.state.connections):
-        await session.close()
+    try:
+        yield
+    finally:
+        await asyncio.gather(*(session.close() for session in tuple(app.state.connections)), return_exceptions=True)
+        app.state.connections.clear()
 
 
 app = FastAPI(title="NOVA Personal Assistant", version="3.0.0", lifespan=lifespan)
@@ -46,7 +49,13 @@ async def websocket_endpoint(websocket: WebSocket):
         await session.send("STATE_CHANGE", {"status": "IDLE", "detail": "Backend connected"})
         await session.sync()
         while True:
-            raw = await websocket.receive_text()
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                break
+            raw = message.get("text")
+            if not isinstance(raw, str):
+                await session.error("Expected a JSON text message.")
+                continue
             if len(raw) > 64000:
                 await session.error("Request too large.")
                 continue
@@ -61,6 +70,14 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         await session.close()
         app.state.connections.discard(session)
+
+
+@app.get("/models/{provider}")
+async def models(provider: str):
+    try:
+        return await discover_models(provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 frontend_dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"

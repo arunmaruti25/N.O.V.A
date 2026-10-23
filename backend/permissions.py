@@ -96,11 +96,17 @@ def evaluate_permission(action: str, target: str = "") -> PermissionCheckResult:
         is_authorized=False,
     )
 
-def evaluate_tool_permission(tool_name: str, arguments: Dict[str, Any] = None) -> PermissionCheckResult:
+def evaluate_tool_permission(tool_name: str, arguments: Dict[str, Any] = None, registry=None) -> PermissionCheckResult:
     """Centralized safety gate evaluating permission level for structured tool calls."""
     name = (tool_name or "").strip().lower()
     args = arguments or {}
     args_str = str(args)
+    if name == "app.launch":
+        from .tools.app_control import APP_ALIASES
+        app_name = args.get("name", "")
+        if args.get("args") or not isinstance(app_name, str) or app_name.lower().strip() not in APP_ALIASES:
+            return PermissionCheckResult(PermissionLevel.CONFIRMATION_REQUIRED, tool_name, args_str,
+                "Custom executables and application arguments require approval.", False)
 
     # 1. Block prohibited patterns across all tool arguments
     blocked_patterns = [
@@ -131,7 +137,7 @@ def evaluate_tool_permission(tool_name: str, arguments: Dict[str, Any] = None) -
     # 3. Check registered tools
     try:
         from .tools.registry import tool_registry
-        tool = tool_registry.get(tool_name)
+        tool = (registry if registry is not None else tool_registry).get(tool_name)
         if tool:
             return PermissionCheckResult(
                 level=tool.permission_level,

@@ -10,6 +10,9 @@ class Settings:
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
+    NVIDIA_BASE_URL: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    MODEL_MAX_TOKENS: int = int(os.getenv("NOVA_MODEL_MAX_TOKENS", "2048"))
+    MODEL_FALLBACK_ENABLED: bool = os.getenv("NOVA_MODEL_FALLBACK", "true").lower() == "true"
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     FISH_SPEECH_API_URL: str = os.getenv("FISH_SPEECH_API_URL", "https://api.fish.audio/v1/tts")
     FISH_SPEECH_API_KEY: str = os.getenv("FISH_SPEECH_API_KEY", "")

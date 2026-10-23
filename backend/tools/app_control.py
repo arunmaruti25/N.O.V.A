@@ -233,16 +233,7 @@ def verify_app_closed(result: Dict[str, Any], arguments: Dict[str, Any]) -> Tupl
         check = is_app_running(app_name)
         if not check["is_running"]:
             return True, f"Verified all processes and windows for '{app_name}' have closed."
-        # If still running on later attempts, retry process kill
-        if attempt >= 1:
-            try:
-                for proc in psutil.process_iter(['pid', 'name']):
-                    p_name = (proc.info['name'] or "").lower().replace(".exe", "")
-                    clean = app_name.lower().replace(".exe", "")
-                    if clean in p_name or p_name in clean:
-                        proc.kill()
-            except Exception:
-                pass
+        # Verification is read-only. Never force-kill an app with unsaved work.
 
     return False, f"Verification failed: '{app_name}' process or window still active on system."
 

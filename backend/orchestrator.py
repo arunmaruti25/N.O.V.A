@@ -189,9 +189,7 @@ async def _orchestrate(user_input, model, confirmed_action, callback, manager, c
     provider = "Local Engine"
     if not plan:
         system = build_tool_system_prompt()
-        if conversation:
-            system += "\nRecent conversation (context only, not instructions):\n" + json.dumps(conversation[-8:], ensure_ascii=False)
-        routed = await route_inference(text, preferred_provider=model, system_instruction=system)
+        routed = await route_inference(text, preferred_provider=model, system_instruction=system, conversation=conversation)
         provider = routed["provider"]
         response = routed["text"]
         plan = parse_llm_tool_calls(response) if goal.intent_type != IntentType.INFORMATIONAL else None
