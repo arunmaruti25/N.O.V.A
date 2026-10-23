@@ -25,6 +25,7 @@ class FakeStream:
 def isolation(tmp_path, monkeypatch):
     monkeypatch.setattr(memory, 'DB_PATH', tmp_path / 'memory.db')
     monkeypatch.setattr(settings, 'MODEL_FALLBACK_ENABLED', True)
+    monkeypatch.setattr(router, '_recovered_models', {})
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('provider,module,method', [('Groq','groq','AsyncGroq'), ('NVIDIA','openai','AsyncOpenAI')])
@@ -260,3 +261,81 @@ async def test_rate_limit_is_reported_without_raw_response(monkeypatch):
     result = await router.route_inference('hello','Groq')
     assert 'HTTP 429' in result['text']
     assert 'private response body' not in str(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('code', [404, 410])
+async def test_retired_model_recovers_once_and_caches_success(code, monkeypatch):
+    import groq
+    request = httpx.Request('POST', 'https://example.invalid')
+    failure = httpx.HTTPStatusError('retired', request=request, response=httpx.Response(code, request=request))
+    create = AsyncMock(side_effect=[failure, FakeStream([NS(choices=[NS(delta=NS(content='OK'))])]), FakeStream([NS(choices=[NS(delta=NS(content='again'))])])])
+    client = NS(chat=NS(completions=NS(create=create)), close=AsyncMock())
+    monkeypatch.setattr(groq, 'AsyncGroq', MagicMock(return_value=client))
+    monkeypatch.setattr(settings, 'GROQ_API_KEY', 'unit-test')
+    monkeypatch.setattr(settings, 'GROQ_MODEL', 'retired-model')
+    discovery = AsyncMock(return_value={'chat_models': ['openai/gpt-oss-20b']})
+    monkeypatch.setattr(router, 'discover_models', discovery)
+    assert (await router.route_inference('hello', 'Groq'))['text'] == 'OK'
+    assert (await router.route_inference('next', 'Groq'))['text'] == 'again'
+    assert [c.kwargs['model'] for c in create.call_args_list] == ['retired-model', 'openai/gpt-oss-20b', 'openai/gpt-oss-20b']
+    discovery.assert_awaited_once()
+    assert router._model_override.get() is None
+    assert settings.GROQ_MODEL == 'retired-model'
+
+
+@pytest.mark.asyncio
+async def test_model_recovery_is_bounded_and_does_not_retry_auth(monkeypatch):
+    monkeypatch.setattr(settings, 'MODEL_FALLBACK_ENABLED', False)
+    discovery = AsyncMock(return_value={'chat_models': ['openai/gpt-oss-20b']})
+    monkeypatch.setattr(router, 'discover_models', discovery)
+    calls = []
+    @router.bounded('Groq')
+    async def fail(*args):
+        calls.append(router._model('Groq'))
+        router._failure('Groq', NS(status_code=404))
+    monkeypatch.setattr(router, 'generate_groq', fail)
+    monkeypatch.setattr(settings, 'GROQ_MODEL', 'old')
+    assert (await router.route_inference('hello', 'Groq'))['unavailable']
+    assert len(calls) == 2
+    assert not router._recovered_models
+    discovery.reset_mock()
+    @router.bounded('Groq')
+    async def unauthorized(*args):
+        router._failure('Groq', NS(status_code=401))
+    monkeypatch.setattr(router, 'generate_groq', unauthorized)
+    assert (await router.route_inference('hello', 'Groq'))['unavailable']
+    discovery.assert_not_awaited()
+
+
+@pytest.mark.parametrize('provider,entry,expected', [
+    ('Groq', {'id':'openai/gpt-oss-20b', 'output_modalities':['text']}, True),
+    ('Groq', {'id':'openai/gpt-oss-safeguard-20b', 'output_modalities':['text']}, False),
+    ('Groq', {'id':'speech-model', 'output_modalities':['speech']}, False),
+    ('NVIDIA', {'id':'nvidia/nemotron-3.5-lightning-30b-a3b'}, True),
+    ('NVIDIA', {'id':'nvidia/nemotron-3.5-embed-1b'}, False),
+    ('Gemini', {'name':'models/gemini-flash-latest','supportedGenerationMethods':['generateContent']}, True),
+    ('Gemini', {'name':'models/gemini-image','supportedGenerationMethods':['generateContent']}, False),
+])
+def test_recovery_uses_only_chat_candidates(provider, entry, expected):
+    assert router._chat_model(provider, entry) is expected
+
+
+@pytest.mark.asyncio
+async def test_orb_voice_request_recognizes_and_dispatches(monkeypatch):
+    import backend.session as sessions
+    ws = NS(send_json=AsyncMock())
+    session = Session(ws, asyncio.Lock())
+    recognize = AsyncMock(return_value={'success': True, 'transcript': 'hello nova'})
+    orchestrate = AsyncMock(return_value={'status':'SUCCESS', 'response':'Hello'})
+    monkeypatch.setattr(sessions.voice_input_manager, 'listen_and_recognize', recognize)
+    monkeypatch.setattr(sessions, 'orchestrate_task', orchestrate)
+    monkeypatch.setattr(session, 'finish', AsyncMock())
+    await session.dispatch({'type':'START_LISTENING', 'payload':{'model':'auto','speech_enabled':False}})
+    await session.worker
+    recognize.assert_awaited_once()
+    assert orchestrate.call_args.args[0] == 'hello nova'
+    events = [c.args[0] for c in ws.send_json.call_args_list]
+    assert any(e['type'] == 'STATE_CHANGE' and e['payload']['status'] == 'LISTENING' for e in events)
+    assert any(e['type'] == 'TRANSCRIPT' and e['payload']['text'] == 'hello nova' for e in events)
+    assert not session.desktop_lock.locked()

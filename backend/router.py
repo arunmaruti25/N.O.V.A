@@ -1,6 +1,7 @@
 """Bounded provider adapters; failures are explicit and never include credentials."""
 import asyncio
 import json
+import time
 from contextvars import ContextVar
 from contextlib import suppress
 from functools import wraps
@@ -20,17 +21,70 @@ class ModelProvider:
 # Each route owns its diagnostics, including when asyncio.wait_for creates a task.
 _errors = ContextVar("provider_errors", default=None)
 _history = ContextVar("provider_history", default=())
+_model_override = ContextVar("provider_model_override", default=None)
+_recovered_models = {}
+
+
+def _model(provider):
+    return _model_override.get() or getattr(settings, provider.upper() + "_MODEL")
+
+
+def _chat_model(provider, entry):
+    """Exclude audio, embedding, moderation and other non-chat catalog entries."""
+    name = entry.get("id") or entry.get("name") or ""
+    if not isinstance(name, str) or entry.get("active") is False:
+        return False
+    if any(part in name.lower() for part in ("embed", "guard", "safety", "whisper", "tts", "orpheus", "image", "transcri", "reward", "retriev", "parse", "robotics", "computer-use")):
+        return False
+    if provider == ModelProvider.GEMINI:
+        return "generateContent" in entry.get("supportedGenerationMethods", []) and "gemini" in name
+    if "output_modalities" in entry:
+        return "text" in entry["output_modalities"]
+    return any(part in name.lower() for part in ("instruct", "gpt-oss", "qwen", "nemotron", "mistral"))
+
+
+async def _replacement(provider, failed):
+    catalog = await discover_models(provider)
+    candidates = catalog.get("chat_models", [])
+    preferred = {
+        ModelProvider.GROQ: ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
+        ModelProvider.GEMINI: ["models/gemini-flash-latest", "models/gemini-flash-lite-latest"],
+        ModelProvider.NVIDIA: ["nvidia/nemotron-3.5-lightning-30b-a3b", "nvidia/nemotron-nano-3-30b-a3b"],
+    }.get(provider, [])
+    return next((m for m in preferred + candidates if m in candidates and m.removeprefix("models/") != failed.removeprefix("models/")), None)
 
 
 def bounded(provider):
     def decorate(function):
         @wraps(function)
         async def run(*args, **kwargs):
+            configured = getattr(settings, provider.upper() + "_MODEL")
+            cached = _recovered_models.get((provider, configured))
+            override = cached[0] if cached and cached[1] > time.monotonic() else None
+            model_token = _model_override.set(override)
+            error_token = _errors.set([]) if _errors.get() is None else None
+            async def attempt():
+                start = len(_errors.get())
+                answer = await function(*args, **kwargs)
+                failures = _errors.get()[start:]
+                # Only a missing/retired model warrants another catalog lookup.
+                if not answer and provider != ModelProvider.OLLAMA and any(e['reason'] in ('HTTP 404', 'HTTP 410') for e in failures):
+                    replacement = await _replacement(provider, _model(provider))
+                    if replacement:
+                        _model_override.set(replacement)
+                        answer = await function(*args, **kwargs)
+                        if answer:
+                            _recovered_models[(provider, configured)] = (replacement, time.monotonic() + 300)
+                return answer
             try:
-                return await asyncio.wait_for(function(*args, **kwargs), settings.MODEL_TIMEOUT_SECONDS)
+                return await asyncio.wait_for(attempt(), settings.MODEL_TIMEOUT_SECONDS)
             except TimeoutError as exc:
                 _failure(provider, exc)
                 return None
+            finally:
+                _model_override.reset(model_token)
+                if error_token is not None:
+                    _errors.reset(error_token)
         return run
     return decorate
 
@@ -64,7 +118,7 @@ async def generate_gemini(prompt: str, system_instruction: str = "") -> Optional
         contents = [types.Content(role="model" if m["role"] == "assistant" else "user",
                     parts=[types.Part(text=m["content"])]) for m in _messages(prompt, "")]
         response = await asyncio.wait_for(client.aio.models.generate_content_stream(
-            model=settings.GEMINI_MODEL, contents=contents,
+            model=_model(ModelProvider.GEMINI), contents=contents,
             config=types.GenerateContentConfig(system_instruction=system_instruction or None,
                 temperature=0.3, max_output_tokens=settings.MODEL_MAX_TOKENS)), settings.MODEL_TIMEOUT_SECONDS)
         return "".join([chunk.text async for chunk in response if chunk.text]).strip() or None
@@ -87,14 +141,14 @@ async def _compatible(provider, prompt, system):
                 return None
             from groq import AsyncGroq
             client = AsyncGroq(api_key=settings.GROQ_API_KEY, timeout=settings.MODEL_TIMEOUT_SECONDS, max_retries=1)
-            model = settings.GROQ_MODEL
+            model = _model(ModelProvider.GROQ)
         else:
             if not settings.NVIDIA_API_KEY:
                 return None
             from openai import AsyncOpenAI
             client = AsyncOpenAI(api_key=settings.NVIDIA_API_KEY, base_url=settings.NVIDIA_BASE_URL,
                                  timeout=settings.MODEL_TIMEOUT_SECONDS, max_retries=1)
-            model = settings.NVIDIA_MODEL
+            model = _model(ModelProvider.NVIDIA)
         response = await asyncio.wait_for(client.chat.completions.create(model=model,
             messages=_messages(prompt, system), temperature=0.3, stream=True,
             **({"max_completion_tokens": settings.MODEL_MAX_TOKENS} if provider == ModelProvider.GROQ else {"max_tokens": settings.MODEL_MAX_TOKENS})),
@@ -217,6 +271,7 @@ async def discover_models(provider: str):
         entries = data.get('models', []) if provider in ('Gemini', 'Ollama') else data.get('data', [])
         models = [item.get('id') or item.get('name') for item in entries if isinstance(item, dict)]
         return {"provider": provider, "models": [m for m in models if isinstance(m, str)], "available": True,
+                "chat_models": [item.get('id') or item.get('name') for item in entries if isinstance(item, dict) and _chat_model(provider, item)],
                 "next_page_token": data.get('nextPageToken')}
     except Exception as exc:
         code = getattr(exc, 'response', None)
