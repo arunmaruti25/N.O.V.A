@@ -66,8 +66,8 @@ function Ribbons({ status, reduced, lowQuality }) {
   });
  });
  return <group ref={group} rotation={[-.18,.2,-.25]}>
-  {[0,1,2].map(i => <mesh key={i} geometry={geometry} rotation={[i*.85+.3,i*.85,i*1.12]} scale={[1,1.08,.94]}><meshPhysicalMaterial onBeforeCompile={fluidMaterial} color={status === 'ERROR' ? '#dba5a1' : status === 'SUCCESS' ? '#c0d7c9' : i === 0 ? '#e8f0ff' : i === 1 ? '#387bff' : '#b9d0f5'} metalness={.82} roughness={.14} clearcoat={1} clearcoatRoughness={.08} iridescence={.2} iridescenceIOR={1.4} iridescenceThicknessRange={[100,420]} transmission={lowQuality ? 0 : .08} thickness={.45} envMapIntensity={1.7} emissive={i === 1 ? '#286bff' : '#7daaff'} emissiveIntensity={.1} /></mesh>)}
-  <mesh><sphereGeometry args={[.92,32,32]} /><meshPhysicalMaterial color="#1259de" metalness={.8} roughness={.16} clearcoat={1} envMapIntensity={2} /></mesh>
+  {[0,1,2].map(i => <mesh key={i} geometry={geometry} rotation={[i*.85+.3,i*.85,i*1.12]} scale={[1,1.08,.94]}><meshPhysicalMaterial onBeforeCompile={fluidMaterial} color={status === 'ERROR' ? '#dba5a1' : status === 'SUCCESS' ? '#c0d7c9' : i === 0 ? '#e8f0ff' : i === 1 ? '#387bff' : '#b9d0f5'} metalness={.72} roughness={.2} clearcoat={1} clearcoatRoughness={.08} iridescence={.2} iridescenceIOR={1.4} iridescenceThicknessRange={[100,420]} transmission={lowQuality ? 0 : .08} thickness={.45} envMapIntensity={1.7} emissive={i === 1 ? '#286bff' : '#7daaff'} emissiveIntensity={.1} /></mesh>)}
+  <mesh><sphereGeometry args={[.92,32,32]} /><meshPhysicalMaterial color="#2878ff" metalness={.5} roughness={.16} emissive="#0e4eff" emissiveIntensity={.12} clearcoat={1} envMapIntensity={2} /></mesh>
   <mesh position={[1.85,.7,.1]} rotation={[.4,.5,.2]}><octahedronGeometry args={[.095,1]} /><meshStandardMaterial color="#387bff" metalness={.9} roughness={.18} /></mesh>
   <mesh position={[-1.6,-.95,.3]}><sphereGeometry args={[.06,12,12]} /><meshStandardMaterial color="#91bcff" metalness={.85} roughness={.2} /></mesh>
  </group>;
