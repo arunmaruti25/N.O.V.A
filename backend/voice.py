@@ -3,6 +3,7 @@ import sys
 import asyncio
 import io
 import time
+import threading
 import uuid
 from pathlib import Path
 from abc import ABC, abstractmethod
@@ -305,10 +306,11 @@ class VoiceInputManager:
         self,
         max_duration: Optional[float] = None,
         samplerate: int = 16000,
-        cancel_event: Optional[asyncio.Event] = None,
+        cancel_event: Optional[threading.Event] = None,
         silence_threshold: Optional[float] = None,
         energy_threshold: Optional[int] = None,
         state_callback: Optional[Callable[[str, str], None]] = None,
+        stop_event: Optional[threading.Event] = None,
     ) -> Optional[bytes]:
         """
         Captures PCM audio chunks via sounddevice.
@@ -327,7 +329,6 @@ class VoiceInputManager:
 
         speech_started = False
         silence_start_time = None
-        start_time = time.time()
 
         try:
             with sd.InputStream(
@@ -336,9 +337,12 @@ class VoiceInputManager:
                 dtype="int16",
                 blocksize=chunk_samples,
             ) as stream:
-                while time.time() - start_time < max_dur:
+                start_time = time.monotonic()
+                while time.monotonic() - start_time < max_dur:
                     if cancel_event and cancel_event.is_set():
                         return None
+                    if stop_event and stop_event.is_set():
+                        break
 
                     data, overflowed = stream.read(chunk_samples)
                     recorded_chunks.append(data.copy())
@@ -357,10 +361,10 @@ class VoiceInputManager:
                         silence_start_time = None
                     elif speech_started:
                         if silence_start_time is None:
-                            silence_start_time = time.time()
+                            silence_start_time = time.monotonic()
                             if state_callback:
                                 state_callback("WAITING_FOR_CONTINUATION", "Waiting for continuation...")
-                        elif time.time() - silence_start_time >= silence_thresh:
+                        elif time.monotonic() - silence_start_time >= silence_thresh:
                             # Configured silence threshold reached: finalize turn
                             if state_callback:
                                 state_callback("FINALIZING", "Finalizing utterance...")
@@ -372,7 +376,7 @@ class VoiceInputManager:
             pcm_array = np.concatenate(recorded_chunks, axis=0)
             return pcm_array.tobytes()
         except Exception as e:
-            return None
+            raise RuntimeError(f"Unable to record microphone audio: {e}") from e
 
     def simulate_turn_taking(
         self,
@@ -427,10 +431,11 @@ class VoiceInputManager:
     async def listen_and_recognize(
         self,
         max_duration: Optional[float] = None,
-        cancel_event: Optional[asyncio.Event] = None,
+        cancel_event: Optional[threading.Event] = None,
         silence_threshold: Optional[float] = None,
         energy_threshold: Optional[int] = None,
         state_callback: Optional[Callable[[str, str], None]] = None,
+        stop_event: Optional[threading.Event] = None,
     ) -> Dict[str, Any]:
         """
         Captures audio from microphone and transcribes it asynchronously.
@@ -446,6 +451,7 @@ class VoiceInputManager:
                 silence_threshold,
                 energy_threshold,
                 state_callback,
+                stop_event,
             )
 
             if cancel_event and cancel_event.is_set():
@@ -457,6 +463,9 @@ class VoiceInputManager:
                     "silence": True,
                     "error": "No audio signal detected or microphone unavailable.",
                 }
+
+            if state_callback:
+                state_callback("PROCESSING", "Transcribing your speech...")
 
             # Convert PCM bytes into speech_recognition AudioData
             audio = sr.AudioData(pcm_bytes, 16000, 2)

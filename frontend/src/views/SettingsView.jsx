@@ -11,7 +11,7 @@ export default function SettingsView() {
       </select></label>
       <p>Ollama mode keeps inference local and disables online speech and web search. In cloud mode, unavailable providers may fall back to another configured provider.</p>
       <label className="check-label"><input type="checkbox" checked={speechEnabled} onChange={(e) => setSpeechEnabled(e.target.checked)} /> Read responses aloud using online text-to-speech</label>
-      <p>The microphone uses push-to-talk and Google speech recognition. Ctrl+Shift+N starts listening; Escape cancels. Audio uses the computer running the backend.</p>
+      <p>The microphone uses push-to-talk and Google speech recognition. Click the microphone to start, then click again to transcribe. Ctrl+Shift+N toggles recording; Escape cancels. Audio uses the computer running the backend.</p>
       <label className="check-label"><input type="checkbox" checked={reducedMotion} onChange={(e) => setReducedMotion(e.target.checked)} /> Reduce animation</label>
     </div>
     <div className="workspace-grid">{availableModels.map((m) => <article className="glass-card workspace-card" key={m.provider}>

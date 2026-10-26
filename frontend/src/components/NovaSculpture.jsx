@@ -61,17 +61,18 @@ function Ribbons({ status, reduced, lowQuality }) {
    if (i < 3) {
     child.rotation.z = i * 1.12 + Math.sin(t*(active ? .8 : .25)+i)*.15;
     if (child.material.userData.novaShader) child.material.userData.novaShader.uniforms.novaTime.value = t * (active ? 1.5 : .45);
-    child.material.color.set(status === 'ERROR' ? '#dba5a1' : status === 'SUCCESS' ? '#c0d7c9' : i === 0 ? '#c8a4f2' : i === 1 ? '#ffcfad' : '#e9c2f1');
+    child.material.color.set(status === 'ERROR' ? '#dba5a1' : status === 'SUCCESS' ? '#c0d7c9' : i === 0 ? '#e8f0ff' : i === 1 ? '#387bff' : '#b9d0f5');
    }
   });
  });
  return <group ref={group} rotation={[-.18,.2,-.25]}>
-  {[0,1,2].map(i => <mesh key={i} geometry={geometry} rotation={[i*.85+.3,i*.85,i*1.12]} scale={[1,1.08,.94]}><meshPhysicalMaterial onBeforeCompile={fluidMaterial} color={status === 'ERROR' ? '#dba5a1' : status === 'SUCCESS' ? '#c0d7c9' : i === 0 ? '#c8a4f2' : i === 1 ? '#ffcfad' : '#e9c2f1'} metalness={.2} roughness={.13} clearcoat={1} clearcoatRoughness={.08} iridescence={1} iridescenceIOR={1.4} iridescenceThicknessRange={[100,420]} transmission={lowQuality ? 0 : .28} thickness={.45} envMapIntensity={1.7} emissive={i === 1 ? '#e8a074' : '#ad7ede'} emissiveIntensity={.1} /></mesh>)}
-  <mesh position={[1.85,.7,.1]} rotation={[.4,.5,.2]}><octahedronGeometry args={[.095,1]} /><meshStandardMaterial color="#d7c9b7" metalness={.9} roughness={.18} /></mesh>
-  <mesh position={[-1.6,-.95,.3]}><sphereGeometry args={[.06,12,12]} /><meshStandardMaterial color="#9b89b0" metalness={.85} roughness={.2} /></mesh>
+  {[0,1,2].map(i => <mesh key={i} geometry={geometry} rotation={[i*.85+.3,i*.85,i*1.12]} scale={[1,1.08,.94]}><meshPhysicalMaterial onBeforeCompile={fluidMaterial} color={status === 'ERROR' ? '#dba5a1' : status === 'SUCCESS' ? '#c0d7c9' : i === 0 ? '#e8f0ff' : i === 1 ? '#387bff' : '#b9d0f5'} metalness={.82} roughness={.14} clearcoat={1} clearcoatRoughness={.08} iridescence={.2} iridescenceIOR={1.4} iridescenceThicknessRange={[100,420]} transmission={lowQuality ? 0 : .08} thickness={.45} envMapIntensity={1.7} emissive={i === 1 ? '#286bff' : '#7daaff'} emissiveIntensity={.1} /></mesh>)}
+  <mesh><sphereGeometry args={[.92,32,32]} /><meshPhysicalMaterial color="#1259de" metalness={.8} roughness={.16} clearcoat={1} envMapIntensity={2} /></mesh>
+  <mesh position={[1.85,.7,.1]} rotation={[.4,.5,.2]}><octahedronGeometry args={[.095,1]} /><meshStandardMaterial color="#387bff" metalness={.9} roughness={.18} /></mesh>
+  <mesh position={[-1.6,-.95,.3]}><sphereGeometry args={[.06,12,12]} /><meshStandardMaterial color="#91bcff" metalness={.85} roughness={.2} /></mesh>
  </group>;
 }
 export default function NovaSculpture({ status, reduced, visible, eventSource }) {
  const [lowQuality,setLowQuality] = useState(() => (navigator.hardwareConcurrency || 4) <= 4);
- return <Canvas eventSource={eventSource} camera={{ position:[0,0,6.6], fov:38 }} dpr={lowQuality ? 1 : [1,1.5]} frameloop={!visible ? 'never' : reduced ? 'demand' : 'always'} gl={{ antialias:true, alpha:true, powerPreference:'low-power' }} fallback={<div className="core-fallback"><i /><i /><i /></div>}><ambientLight intensity={.7} /><directionalLight position={[3,5,4]} intensity={2.8} color="#fff6ee" /><directionalLight position={[-4,-2,2]} intensity={1.6} color="#cab9ff" /><Environment resolution={128}><Lightformer intensity={4} position={[0,4,-2]} scale={[10,4,1]} /><Lightformer intensity={3} position={[-4,1,3]} rotation={[0,Math.PI/3,0]} scale={[2,8,1]} /><Lightformer intensity={2} color="#f0c8b9" position={[4,-2,1]} scale={[3,6,1]} /></Environment><PerformanceMonitor onDecline={() => setLowQuality(true)} flipflops={1} onFallback={() => setLowQuality(true)} /><Ribbons status={status} reduced={reduced} lowQuality={lowQuality} /></Canvas>;
+ return <Canvas eventSource={eventSource} camera={{ position:[0,0,6.6], fov:38 }} dpr={lowQuality ? 1 : [1,1.5]} frameloop={!visible ? 'never' : reduced ? 'demand' : 'always'} gl={{ antialias:true, alpha:true, powerPreference:'low-power' }} fallback={<div className="core-fallback"><i /><i /><i /></div>}><ambientLight intensity={.7} /><directionalLight position={[3,5,4]} intensity={2.8} color="#f5f7fa" /><directionalLight position={[-4,-2,2]} intensity={1.6} color="#a9cdff" /><Environment resolution={128}><Lightformer intensity={4} position={[0,4,-2]} scale={[10,4,1]} /><Lightformer intensity={3} position={[-4,1,3]} rotation={[0,Math.PI/3,0]} scale={[2,8,1]} /><Lightformer intensity={2} color="#b9d7ff" position={[4,-2,1]} scale={[3,6,1]} /></Environment><PerformanceMonitor onDecline={() => setLowQuality(true)} flipflops={1} onFallback={() => setLowQuality(true)} /><Ribbons status={status} reduced={reduced} lowQuality={lowQuality} /></Canvas>;
 }

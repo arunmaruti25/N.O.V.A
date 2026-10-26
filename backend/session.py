@@ -30,6 +30,8 @@ class Session:
         self.tasks = TaskManager()
         self.worker = None
         self.cancel_event = threading.Event()
+        self.stop_listening_event = threading.Event()
+        self.listening = False
         self.pending = None
         self.conversation = []
         self.closed = False
@@ -70,6 +72,10 @@ class Session:
                 payload = {**payload, "task_id": control.get("target")}
         if kind == "PING":
             return await self.send("PONG", {})
+        if kind == "STOP_LISTENING":
+            if self.listening:
+                self.stop_listening_event.set()
+            return
         if kind in {"INTERRUPT", "TASK_CANCEL"}:
             self.cancel_event.set()
             task = self.tasks.request_cancel(payload.get("task_id"))
@@ -107,6 +113,7 @@ class Session:
         if self.desktop_lock.locked():
             return await self.error("Another NOVA session is using the desktop. Try again when it finishes.")
         self.cancel_event = threading.Event()
+        self.stop_listening_event = threading.Event()
         self.worker = asyncio.create_task(self.run(kind, payload))
 
     async def ask(self, result):
@@ -190,11 +197,26 @@ class Session:
                         if local:
                             raise ValueError("Speech recognition uses an online service. Use typed commands in local mode.")
                         await self.send("STATE_CHANGE", {"status": "LISTENING", "detail": "Speak now"})
-                        heard = await self.atomic(voice_input_manager.listen_and_recognize(cancel_event=self.cancel_event))
+                        loop = asyncio.get_running_loop()
+
+                        def recording_state(status, detail):
+                            # Recording runs in a thread; send UI updates on the event loop.
+                            asyncio.run_coroutine_threadsafe(
+                                self.send("STATE_CHANGE", {"status": status, "detail": detail}), loop)
+
+                        self.listening = True
+                        try:
+                            heard = await self.atomic(voice_input_manager.listen_and_recognize(
+                                cancel_event=self.cancel_event,
+                                stop_event=self.stop_listening_event,
+                                state_callback=recording_state))
+                        finally:
+                            self.listening = False
                         if not heard.get("success"):
                             raise ValueError(heard.get("error", "No speech recognized."))
                         text = heard["transcript"]
                         await self.send("TRANSCRIPT", {"text": text})
+                        await self.send("STATE_CHANGE", {"status": "PROCESSING", "detail": "Working on your request"})
                         private_mode.set(select_model_by_intent(text, model) == "Ollama")
                     result = await orchestrate_task(text, model, on_task_event=self.send, manager=self.tasks, conversation=self.conversation)
                     self.conversation = (self.conversation + [{"role": "user", "content": text}, {"role": "assistant", "content": result.get("response", "")}])[-16:]

@@ -124,6 +124,8 @@ export function NovaProvider({ children }) {
     if (sent) { setStatus("PROCESSING"); setStatusDetail("Working on your request"); }
     return sent;
   }, [send, activeModel.provider, isAutoRouting, speechEnabled]);
+  const isListening = ["LISTENING", "SPEECH_DETECTED", "WAITING_FOR_CONTINUATION"].includes(status);
+  const busy = isListening || ["PROCESSING", "THINKING", "EXECUTING", "RECOVERING", "VERIFYING", "FINALIZING", "SPEAKING", "CONFIRMATION"].includes(status);
   const triggerVoiceCommand = useCallback((text) => {
     if (text?.trim()) {
       const command = text.trim();
@@ -136,20 +138,21 @@ export function NovaProvider({ children }) {
         return true;
       }
       return false;
-    } else return request("START_LISTENING");
-  }, [request, send]);
+    } else if (isListening) return request("STOP_LISTENING");
+    else if (!busy) return request("START_LISTENING");
+    return false;
+  }, [request, send, isListening, busy]);
   const cancelOperation = useCallback(() => { send("INTERRUPT"); setPermissionState({ isOpen: false }); }, [send]);
   const pauseTask = useCallback((task_id) => send("TASK_PAUSE", { task_id }), [send]);
   const resumeTask = useCallback((task_id) => request("TASK_RESUME", { task_id }), [request]);
   const cancelTask = useCallback((task_id) => send("TASK_CANCEL", { task_id }), [send]);
-  const busy = ["PROCESSING", "THINKING", "EXECUTING", "RECOVERING", "SPEAKING", "LISTENING", "CONFIRMATION"].includes(status);
   const availableModels = AVAILABLE_MODELS.map((m) => ({ ...m, ...modelConfig.find((c) => c.provider === m.provider) }));
   return <NovaContext.Provider value={{
     status, setStatus, statusDetail, setStatusDetail, errorMessage, setErrorMessage,
     currentView, setCurrentView, sidebarCollapsed, setSidebarCollapsed, isMiniMode, setIsMiniMode,
     activeModel, setActiveModel, isAutoRouting, setIsAutoRouting, availableModels,
     speechEnabled, setSpeechEnabled, reducedMotion, setReducedMotion,
-    isListening: status === "LISTENING", transcript, setTranscript, messages, waveformBars: [0.2, 0.4, 0.7, 0.4, 0.2],
+    isListening, transcript, setTranscript, messages, waveformBars: [0.2, 0.4, 0.7, 0.4, 0.2],
     permissionState, notifications, addNotification, removeNotification, activities, addActivity,
     triggerVoiceCommand, cancelOperation, isBackendConnected, currentTask, pauseTask, resumeTask, cancelTask,
     request, send, busy, memories, tools, systemStatus, webResult, visionResult,
