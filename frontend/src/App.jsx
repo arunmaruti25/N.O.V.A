@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { AnimatePresence, motion, MotionConfig } from 'framer-motion';
+import { motion, MotionConfig } from 'framer-motion';
 import { NovaProvider } from './context/NovaContext';
 import { useNova } from './context/useNova';
 import Header from './components/Header';
@@ -33,10 +33,10 @@ function NovaMainApp() {
     return () => window.removeEventListener('keydown', handler);
   }, [setIsMiniMode, triggerVoiceCommand, cancelOperation, permissionState.isOpen]);
   const View = views[currentView] || HomeView;
-  return <MotionConfig reducedMotion={reducedMotion ? 'always' : 'user'}><div className="nova-app" data-reduced-motion={reducedMotion}>
+  return <MotionConfig reducedMotion={reducedMotion ? 'always' : 'user'}><div className="nova-app" data-reduced-motion={reducedMotion} data-mini-mode={isMiniMode}>
     <a className="skip-link" href="#main-content">Skip to content</a>
-    <AnimatePresence>{isMiniMode && <MiniNova />}</AnimatePresence>
-    {!isMiniMode && <><Header /><main id="main-content" className="main-content"><AnimatePresence mode="wait"><motion.div className="view-container" key={currentView} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ type: 'spring', stiffness: 240, damping: 28 }}><View /></motion.div></AnimatePresence></main><Sidebar /><footer className="app-footer"><span>NOVA SPATIAL ATELIER</span><span>Your space. Your intelligence.</span><span>CTRL + SHIFT + N <i /> TALK TO NOVA</span></footer></>}
+    {isMiniMode && <MiniNova />}
+    <Header /><main id="main-content" className="main-content"><div className="view-container home-container" hidden={currentView !== 'home'}><HomeView /></div>{currentView !== 'home' && <motion.div className="view-container" key={currentView} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .14, ease: 'easeOut' }}><View /></motion.div>}</main><Sidebar /><footer className="app-footer"><span>NOVA SPATIAL ATELIER</span><span>Your space. Your intelligence.</span><span>CTRL + SHIFT + N <i /> TALK TO NOVA</span></footer>
     <PermissionModal /><NotificationToast />
   </div></MotionConfig>;
 }

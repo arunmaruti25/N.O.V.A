@@ -120,6 +120,8 @@ async def generate_gemini(prompt: str, system_instruction: str = "") -> Optional
         response = await asyncio.wait_for(client.aio.models.generate_content_stream(
             model=_model(ModelProvider.GEMINI), contents=contents,
             config=types.GenerateContentConfig(system_instruction=system_instruction or None,
+                # NOVA's planner and permission checks own tool execution.
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                 temperature=0.3, max_output_tokens=settings.MODEL_MAX_TOKENS)), settings.MODEL_TIMEOUT_SECONDS)
         return "".join([chunk.text async for chunk in response if chunk.text]).strip() or None
     except Exception as exc:
@@ -211,7 +213,7 @@ def generate_local_fallback(prompt: str) -> str:
 
 async def route_inference(prompt: str, preferred_provider: str = ModelProvider.GEMINI,
         system_instruction: str = "You are NOVA, a calm, precise personal AI assistant for Windows.",
-        conversation=None) -> Dict[str, Any]:
+        conversation=None, on_model_change=None) -> Dict[str, Any]:
     if not isinstance(prompt, str) or not isinstance(preferred_provider, str):
         raise ValueError("Prompt and provider must be strings.")
     providers = [ModelProvider.GEMINI, ModelProvider.GROQ, ModelProvider.NVIDIA, ModelProvider.OLLAMA]
@@ -231,14 +233,26 @@ async def route_inference(prompt: str, preferred_provider: str = ModelProvider.G
                   ModelProvider.NVIDIA: generate_nvidia, ModelProvider.OLLAMA: generate_ollama}
     try:
         for provider in order:
+            if on_model_change:
+                await on_model_change("MODEL_CHANGE", {"provider": provider,
+                    "model": getattr(settings, provider.upper() + "_MODEL"),
+                    "phase": "trying", "fallback_used": provider != selected})
             try:
                 answer = await asyncio.wait_for(generators[provider](prompt, system_instruction), settings.MODEL_TIMEOUT_SECONDS)
             except Exception as exc:
                 _failure(provider, exc)
                 answer = None
             if answer:
+                configured = getattr(settings, provider.upper() + "_MODEL")
+                cached = _recovered_models.get((provider, configured))
+                used_model = cached[0] if cached and cached[1] > time.monotonic() else configured
+                if on_model_change:
+                    await on_model_change("MODEL_CHANGE", {"provider": provider, "model": used_model,
+                        "phase": "active", "fallback_used": provider != selected})
                 return {"provider": provider, "text": answer, "fallback_used": provider != selected}
         detail = "; ".join(f"{e['provider']}: {e['reason']}" for e in errors)
+        if on_model_change:
+            await on_model_change("MODEL_CHANGE", {"provider": "Local", "model": None, "phase": "unavailable"})
         return {"provider": ModelProvider.LOCAL, "text": generate_local_fallback(prompt) + (f" ({detail})" if detail else ""),
                 "mode": "Unavailable", "fallback_used": True, "unavailable": True, "errors": errors}
     finally:

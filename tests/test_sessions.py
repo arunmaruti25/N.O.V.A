@@ -22,6 +22,41 @@ class Socket:
         self.events.append(event)
 
 
+@pytest.mark.asyncio
+async def test_background_status_does_not_interrupt_running_task(monkeypatch):
+    monkeypatch.setattr(sessions, 'get_system_info', lambda: {'cpu_percent': 12, 'disk_percent': 24})
+    monkeypatch.setattr(sessions, 'get_system_volume', lambda: {'volume_percent': 30})
+    session = Session(Socket(), asyncio.Lock())
+    session.worker = asyncio.create_task(asyncio.sleep(60))
+    try:
+        await session.dispatch({'type': 'GET_SYSTEM_STATUS'})
+        assert session.ws.events[-1]['type'] == 'SYSTEM_STATUS'
+        assert session.ws.events[-1]['payload']['system']['disk_percent'] == 24
+        assert not session.worker.done()
+    finally:
+        session.worker.cancel()
+        await asyncio.gather(session.worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_status_capability_and_unknown_event_diagnostics(monkeypatch):
+    monkeypatch.setattr(sessions, 'list_memories', AsyncMock(return_value=[]))
+    monkeypatch.setattr(sessions, 'get_system_info', lambda: {'cpu_percent': 12})
+    monkeypatch.setattr(sessions, 'get_system_volume', lambda: {'volume_percent': 30})
+    session = Session(Socket(), asyncio.Lock())
+    await session.sync()
+    config = next(e['payload'] for e in session.ws.events if e['type'] == 'MODEL_CONFIG')
+    assert 'GET_SYSTEM_STATUS' in config['supported_events']
+    session.ws.events.clear()
+    await session.dispatch({'type': 'GET_SYSTEM_STATUS'})
+    assert [e['type'] for e in session.ws.events] == ['SYSTEM_STATUS']
+    await session.dispatch({'type': 'UNSUPPORTED_REQUEST'})
+    error = session.ws.events[-1]['payload']
+    assert error['code'] == 'UNKNOWN_EVENT'
+    assert error['event_type'] == 'UNSUPPORTED_REQUEST'
+    assert 'restart the backend' in error['message']
+
+
 def until(ws, kind):
     for _ in range(50):
         event = ws.receive_json()

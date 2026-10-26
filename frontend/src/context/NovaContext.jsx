@@ -33,6 +33,8 @@ export function NovaProvider({ children }) {
   const [memories, setMemories] = useState([]);
   const [tools, setTools] = useState([]);
   const [modelConfig, setModelConfig] = useState([]);
+  const [supportedEvents, setSupportedEvents] = useState([]);
+  const [taskModel, setTaskModel] = useState(null);
   const [systemStatus, setSystemStatus] = useState(null);
   const [webResult, setWebResult] = useState(null);
   const [visionResult, setVisionResult] = useState(null);
@@ -84,7 +86,11 @@ export function NovaProvider({ children }) {
         }
         else if (type === "MEMORY_SYNC") setMemories(p.memories || []);
         else if (type === "SKILLS_SYNC") setTools(p.tools || []);
-        else if (type === "MODEL_CONFIG") setModelConfig(p.models || []);
+        else if (type === "MODEL_CONFIG") {
+          setModelConfig(p.models || []);
+          setSupportedEvents(p.supported_events || []);
+        }
+        else if (type === "MODEL_CHANGE") setTaskModel(p);
         else if (type === "SYSTEM_STATUS") setSystemStatus(p);
         else if (type === "WEB_RESULT") setWebResult(p);
         else if (type === "VISION_RESULT") setVisionResult(p);
@@ -107,7 +113,8 @@ export function NovaProvider({ children }) {
       socket.onclose = () => {
         if (disposed) return;
         setIsBackendConnected(false); setStatus("OFFLINE"); setStatusDetail("Backend disconnected; reconnecting");
-        setPermissionState({ isOpen: false }); setCurrentTask(null);
+        setPermissionState({ isOpen: false }); setCurrentTask(null); setSystemStatus(null); setTaskModel(null);
+        setSupportedEvents([]);
         reconnectTimer = setTimeout(connect, 2500);
       };
       socket.onerror = () => socket.close();
@@ -119,13 +126,34 @@ export function NovaProvider({ children }) {
       socket?.close(); wsRef.current = null;
     };
   }, [send, addActivity, addNotification]);
+  useEffect(() => {
+    // Older servers treat status reads as commands and reject GET_SYSTEM_STATUS.
+    if (!isBackendConnected || isMiniMode || !supportedEvents.includes("GET_SYSTEM_STATUS")) return;
+    const refresh = () => { if (!document.hidden) send("GET_SYSTEM_STATUS"); };
+    refresh();
+    const timer = setInterval(refresh, 10000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
+  }, [isBackendConnected, isMiniMode, supportedEvents, send]);
   const request = useCallback((type, payload = {}) => {
     const sent = send(type, { model: isAutoRouting ? "auto" : activeModel.provider, speech_enabled: speechEnabled, ...payload });
-    if (sent) { setStatus("PROCESSING"); setStatusDetail("Working on your request"); }
+    if (sent) {
+      setStatus("PROCESSING"); setStatusDetail("Working on your request");
+      if (["USER_INPUT", "START_LISTENING"].includes(type)) setTaskModel(null);
+    }
     return sent;
   }, [send, activeModel.provider, isAutoRouting, speechEnabled]);
   const isListening = ["LISTENING", "SPEECH_DETECTED", "WAITING_FOR_CONTINUATION"].includes(status);
   const busy = isListening || ["PROCESSING", "THINKING", "EXECUTING", "RECOVERING", "VERIFYING", "FINALIZING", "SPEAKING", "CONFIRMATION"].includes(status);
+  const refreshSystemStatus = useCallback(() => {
+    if (supportedEvents.includes("GET_SYSTEM_STATUS")) return send("GET_SYSTEM_STATUS");
+    if (!busy) return request("SYSTEM_STATUS");
+    return false;
+  }, [supportedEvents, busy, send, request]);
+  useEffect(() => {
+    document.title = `NOVA — ${!isBackendConnected ? "Offline" : permissionState.isOpen ? "Review action" : busy ? "Working" : "Ready"}`;
+    return () => { document.title = "NOVA"; };
+  }, [isBackendConnected, permissionState.isOpen, busy]);
   const triggerVoiceCommand = useCallback((text) => {
     if (text?.trim()) {
       const command = text.trim();
@@ -150,11 +178,11 @@ export function NovaProvider({ children }) {
   return <NovaContext.Provider value={{
     status, setStatus, statusDetail, setStatusDetail, errorMessage, setErrorMessage,
     currentView, setCurrentView, sidebarCollapsed, setSidebarCollapsed, isMiniMode, setIsMiniMode,
-    activeModel, setActiveModel, isAutoRouting, setIsAutoRouting, availableModels,
+    activeModel, setActiveModel, isAutoRouting, setIsAutoRouting, availableModels, taskModel,
     speechEnabled, setSpeechEnabled, reducedMotion, setReducedMotion,
     isListening, transcript, setTranscript, messages, waveformBars: [0.2, 0.4, 0.7, 0.4, 0.2],
     permissionState, notifications, addNotification, removeNotification, activities, addActivity,
     triggerVoiceCommand, cancelOperation, isBackendConnected, currentTask, pauseTask, resumeTask, cancelTask,
-    request, send, busy, memories, tools, systemStatus, webResult, visionResult,
+    request, send, refreshSystemStatus, busy, memories, tools, systemStatus, webResult, visionResult,
   }}>{children}</NovaContext.Provider>;
 }

@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Lightformer, PerformanceMonitor } from '@react-three/drei';
 import { BufferGeometry, Float32BufferAttribute, MathUtils, Vector3 } from 'three';
+const camera = { position: [0, 0, 6.6], fov: 38 };
+const renderer = { antialias: true, alpha: true, powerPreference: 'default' };
+const displayResolution = [1, 1.25];
 // A broad, softly rounded ribbon with a twisting oval cross section.
 // Generated locally so the sculpture needs no model or texture downloads.
 function createRibbon(segments) {
@@ -43,7 +46,7 @@ function fluidMaterial(shader) {
 function Ribbons({ status, reduced, lowQuality }) {
  const group = useRef();
  const time = useRef(0);
- const geometry = useMemo(() => createRibbon(lowQuality ? 100 : 200), [lowQuality]);
+ const geometry = useMemo(() => createRibbon(lowQuality ? 72 : 128), [lowQuality]);
  useEffect(() => () => geometry.dispose(), [geometry]);
  const active = ['THINKING','PROCESSING','EXECUTING','RECOVERING'].includes(status);
  useFrame(({ pointer }, delta) => {
@@ -57,22 +60,20 @@ function Ribbons({ status, reduced, lowQuality }) {
   group.current.position.y = Math.sin(t * .65) * .085;
   const pulse = status === 'SPEAKING' ? Math.sin(t*5)*.035 : status === 'LISTENING' ? .045 + Math.sin(t*2.5)*.028 : status === 'SUCCESS' ? .045 : Math.sin(t)*.012;
   group.current.scale.setScalar(1+pulse);
-  group.current.children.forEach((child,i) => {
-   if (i < 3) {
+  for (let i = 0; i < 3; i++) {
+    const child = group.current.children[i];
     child.rotation.z = i * 1.12 + Math.sin(t*(active ? .8 : .25)+i)*.15;
     if (child.material.userData.novaShader) child.material.userData.novaShader.uniforms.novaTime.value = t * (active ? 1.5 : .45);
-    child.material.color.set(status === 'ERROR' ? '#dba5a1' : status === 'SUCCESS' ? '#c0d7c9' : i === 0 ? '#e8f0ff' : i === 1 ? '#387bff' : '#b9d0f5');
-   }
-  });
+  }
  });
  return <group ref={group} rotation={[-.18,.2,-.25]}>
-  {[0,1,2].map(i => <mesh key={i} geometry={geometry} rotation={[i*.85+.3,i*.85,i*1.12]} scale={[1,1.08,.94]}><meshPhysicalMaterial onBeforeCompile={fluidMaterial} color={status === 'ERROR' ? '#dba5a1' : status === 'SUCCESS' ? '#c0d7c9' : i === 0 ? '#e8f0ff' : i === 1 ? '#387bff' : '#b9d0f5'} metalness={.72} roughness={.2} clearcoat={1} clearcoatRoughness={.08} iridescence={.2} iridescenceIOR={1.4} iridescenceThicknessRange={[100,420]} transmission={lowQuality ? 0 : .08} thickness={.45} envMapIntensity={1.7} emissive={i === 1 ? '#286bff' : '#7daaff'} emissiveIntensity={.1} /></mesh>)}
+  {[0,1,2].map(i => <mesh key={i} geometry={geometry} rotation={[i*.85+.3,i*.85,i*1.12]} scale={[1,1.08,.94]}><meshPhysicalMaterial onBeforeCompile={fluidMaterial} color={status === 'ERROR' ? '#dba5a1' : status === 'SUCCESS' ? '#c0d7c9' : i === 0 ? '#e8f0ff' : i === 1 ? '#387bff' : '#b9d0f5'} metalness={.72} roughness={.2} clearcoat={1} clearcoatRoughness={.08} envMapIntensity={1.7} emissive={i === 1 ? '#286bff' : '#7daaff'} emissiveIntensity={.1} /></mesh>)}
   <mesh><sphereGeometry args={[.92,32,32]} /><meshPhysicalMaterial color="#2878ff" metalness={.5} roughness={.16} emissive="#0e4eff" emissiveIntensity={.12} clearcoat={1} envMapIntensity={2} /></mesh>
   <mesh position={[1.85,.7,.1]} rotation={[.4,.5,.2]}><octahedronGeometry args={[.095,1]} /><meshStandardMaterial color="#387bff" metalness={.9} roughness={.18} /></mesh>
   <mesh position={[-1.6,-.95,.3]}><sphereGeometry args={[.06,12,12]} /><meshStandardMaterial color="#91bcff" metalness={.85} roughness={.2} /></mesh>
  </group>;
 }
-export default function NovaSculpture({ status, reduced, visible, eventSource }) {
+export default memo(function NovaSculpture({ status, reduced, visible, eventSource }) {
  const [lowQuality,setLowQuality] = useState(() => (navigator.hardwareConcurrency || 4) <= 4);
- return <Canvas eventSource={eventSource} camera={{ position:[0,0,6.6], fov:38 }} dpr={lowQuality ? 1 : [1,1.5]} frameloop={!visible ? 'never' : reduced ? 'demand' : 'always'} gl={{ antialias:true, alpha:true, powerPreference:'low-power' }} fallback={<div className="core-fallback"><i /><i /><i /></div>}><ambientLight intensity={.7} /><directionalLight position={[3,5,4]} intensity={2.8} color="#f5f7fa" /><directionalLight position={[-4,-2,2]} intensity={1.6} color="#a9cdff" /><Environment resolution={128}><Lightformer intensity={4} position={[0,4,-2]} scale={[10,4,1]} /><Lightformer intensity={3} position={[-4,1,3]} rotation={[0,Math.PI/3,0]} scale={[2,8,1]} /><Lightformer intensity={2} color="#b9d7ff" position={[4,-2,1]} scale={[3,6,1]} /></Environment><PerformanceMonitor onDecline={() => setLowQuality(true)} flipflops={1} onFallback={() => setLowQuality(true)} /><Ribbons status={status} reduced={reduced} lowQuality={lowQuality} /></Canvas>;
-}
+ return <Canvas eventSource={eventSource} camera={camera} dpr={lowQuality ? 1 : displayResolution} frameloop={!visible ? 'never' : reduced ? 'demand' : 'always'} gl={renderer} fallback={<div className="core-fallback"><i /><i /><i /></div>}><ambientLight intensity={.7} /><directionalLight position={[3,5,4]} intensity={2.8} color="#f5f7fa" /><directionalLight position={[-4,-2,2]} intensity={1.6} color="#a9cdff" /><Environment resolution={64} frames={1}><Lightformer intensity={4} position={[0,4,-2]} scale={[10,4,1]} /><Lightformer intensity={3} position={[-4,1,3]} rotation={[0,Math.PI/3,0]} scale={[2,8,1]} /><Lightformer intensity={2} color="#b9d7ff" position={[4,-2,1]} scale={[3,6,1]} /></Environment><PerformanceMonitor onDecline={() => setLowQuality(true)} flipflops={1} onFallback={() => setLowQuality(true)} /><Ribbons status={status} reduced={reduced} lowQuality={lowQuality} /></Canvas>;
+});

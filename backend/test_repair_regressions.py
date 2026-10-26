@@ -50,8 +50,26 @@ async def test_gemini_roles_and_cleanup(monkeypatch):
     result = await router.route_inference('next', 'Gemini', conversation=[{'role':'assistant','content':'past'}])
     assert result['text'] == 'answer'
     assert create.call_args.kwargs['contents'][0].role == 'model'
+    assert create.call_args.kwargs['config'].automatic_function_calling.disable is True
     client.aio.aclose.assert_awaited_once()
     client.close.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_gemini_sdk_stream_does_not_enable_afc(monkeypatch, caplog):
+    from google.genai import models, types
+    # Exercise the installed SDK's public streaming path without a network call.
+    stream = AsyncMock(return_value=FakeStream([
+        types.GenerateContentResponse(candidates=[types.Candidate(
+            content=types.Content(role='model', parts=[types.Part(text='answer')]))])
+    ]))
+    monkeypatch.setattr(models.AsyncModels, '_generate_content_stream', stream)
+    monkeypatch.setattr(models.AsyncModels, '_logged_afc_warning', False)
+    monkeypatch.setattr(settings, 'GEMINI_API_KEY', 'unit-test-only')
+    result = await router.generate_gemini('hello')
+    assert result == 'answer'
+    stream.assert_awaited_once()
+    assert not models.AsyncModels._logged_afc_warning
+    assert 'Direct use of automatic function calling' not in caplog.text
 
 @pytest.mark.asyncio
 async def test_ollama_chat_payload(monkeypatch):
@@ -196,7 +214,7 @@ def test_http_websocket_startup_and_shutdown():
     with TestClient(app) as client:
         assert client.get('/health').json()['status'] == 'online'
         with client.websocket_connect('/ws/nova') as ws:
-            for expected in ('STATE_CHANGE','MEMORY_SYNC','SKILLS_SYNC','MODEL_CONFIG'):
+            for expected in ('STATE_CHANGE','MEMORY_SYNC','SKILLS_SYNC','MODEL_CONFIG','SYSTEM_STATUS'):
                 assert ws.receive_json()['type'] == expected
             ws.send_json({'type':[]})
             assert ws.receive_json()['type'] == 'ERROR'

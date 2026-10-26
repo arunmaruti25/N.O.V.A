@@ -1,6 +1,7 @@
 import platform
 import psutil
 import subprocess
+from pathlib import Path
 from typing import Dict, Any, List
 
 ALLOWED_APPS: Dict[str, str] = {
@@ -21,6 +22,10 @@ ALLOWED_APPS: Dict[str, str] = {
 def get_system_info() -> Dict[str, Any]:
     """Retrieve host system specs, memory utilization, and CPU load."""
     mem = psutil.virtual_memory()
+    try:
+        disk_percent = psutil.disk_usage(Path.home().anchor or '/').percent
+    except OSError:
+        disk_percent = None
     return {
         "os": platform.system(),
         "release": platform.release(),
@@ -31,6 +36,7 @@ def get_system_info() -> Dict[str, Any]:
         "memory_total_gb": round(mem.total / (1024 ** 3), 2),
         "memory_used_gb": round(mem.used / (1024 ** 3), 2),
         "memory_percent": mem.percent,
+        "disk_percent": disk_percent,
     }
 
 def get_system_volume() -> Dict[str, Any]:

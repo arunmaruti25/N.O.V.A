@@ -5,6 +5,28 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+
+@pytest.mark.asyncio
+async def test_model_switch_events_follow_actual_fallback(monkeypatch):
+    from backend import router
+    from unittest.mock import AsyncMock
+    events = AsyncMock()
+    monkeypatch.setattr(router, 'generate_groq', AsyncMock(return_value=None))
+    monkeypatch.setattr(router, 'generate_gemini', AsyncMock(return_value='Hello'))
+    result = await router.route_inference('hello', 'Groq', on_model_change=events)
+    assert result['provider'] == 'Gemini'
+    changes = [call.args[1] for call in events.call_args_list]
+    assert changes[0]['provider'] == 'Groq'
+    assert changes[-1]['provider'] == 'Gemini'
+    assert changes[-1]['phase'] == 'active'
+    assert changes[-1]['fallback_used'] is True
+
+
+def test_system_status_includes_disk_usage():
+    from backend.tools.computer import get_system_info
+    result = get_system_info()
+    assert 0 <= result['disk_percent'] <= 100
+
 from backend import router
 from backend.task_understanding import SuccessCondition
 from backend.tools.file_control import create_file

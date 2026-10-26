@@ -45,6 +45,11 @@ class Session:
     async def error(self, message):
         await self.send("ERROR", {"message": message})
 
+    async def system_status(self):
+        system, volume = await asyncio.gather(
+            asyncio.to_thread(get_system_info), asyncio.to_thread(get_system_volume))
+        await self.send("SYSTEM_STATUS", {"system": system, "volume": volume})
+
     async def sync(self):
         await self.send("MEMORY_SYNC", {"memories": await list_memories()})
         await self.send("SKILLS_SYNC", {"tools": tool_registry.list_tools()})
@@ -52,7 +57,8 @@ class Session:
             {"provider": name, "tag": getattr(settings, name.upper() + "_MODEL"),
              "configured": bool(getattr(settings, name.upper() + "_API_KEY", True))}
             for name in ("Gemini", "Groq", "NVIDIA", "Ollama")
-        ]})
+        ], "supported_events": ["GET_SYSTEM_STATUS", "STOP_LISTENING"]})
+        await self.system_status()
 
     def busy(self):
         return self.worker is not None and not self.worker.done()
@@ -72,6 +78,8 @@ class Session:
                 payload = {**payload, "task_id": control.get("target")}
         if kind == "PING":
             return await self.send("PONG", {})
+        if kind == "GET_SYSTEM_STATUS":
+            return await self.system_status()
         if kind == "STOP_LISTENING":
             if self.listening:
                 self.stop_listening_event.set()
@@ -109,7 +117,8 @@ class Session:
             return await self.error("Confirm or decline the pending action first.")
         if kind not in {"USER_INPUT", "START_LISTENING", "TASK_RESUME", "PERMISSION_DECISION",
                         "MEMORY_SAVE", "MEMORY_DELETE", "SYSTEM_STATUS", "CAPTURE_SCREEN", "WEB_SEARCH"}:
-            return await self.error("Unknown event type.")
+            return await self.send("ERROR", {"code": "UNKNOWN_EVENT", "event_type": kind[:80],
+                "message": f"Unsupported request: {kind[:80]}. Refresh NOVA and restart the backend if this continues."})
         if self.desktop_lock.locked():
             return await self.error("Another NOVA session is using the desktop. Try again when it finishes.")
         self.cancel_event = threading.Event()

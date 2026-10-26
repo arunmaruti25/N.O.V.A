@@ -140,8 +140,14 @@ async def orchestrate_task(user_input, preferred_model="auto", confirmed_action=
     model = select_model_by_intent(user_input, preferred_model)
     token = private_mode.set(model == ModelProvider.OLLAMA)
     try:
-        return await _orchestrate(user_input, model, confirmed_action, on_task_event,
-                                  manager or task_manager, conversation or [])
+        await _emit(on_task_event, "MODEL_CHANGE", {"provider": model,
+            "model": getattr(settings, model.upper() + "_MODEL"), "phase": "selected"})
+        result = await _orchestrate(user_input, model, confirmed_action, on_task_event,
+                                   manager or task_manager, conversation or [])
+        if not result.get("model_used"):
+            result["model_used"] = "Local Engine"
+            await _emit(on_task_event, "MODEL_CHANGE", {"provider": "Local Engine", "model": None, "phase": "active"})
+        return result
     finally:
         private_mode.reset(token)
 
@@ -187,9 +193,12 @@ async def _orchestrate(user_input, model, confirmed_action, callback, manager, c
             state = await asyncio.to_thread(get_computer_state, include_screenshot=False, include_ui_elements=False)
             plan = plan_task_from_goal(goal, state)
     provider = "Local Engine"
+    if plan:
+        await _emit(callback, "MODEL_CHANGE", {"provider": provider, "model": None, "phase": "active"})
     if not plan:
         system = build_tool_system_prompt()
-        routed = await route_inference(text, preferred_provider=model, system_instruction=system, conversation=conversation)
+        routed = await route_inference(text, preferred_provider=model, system_instruction=system,
+                                       conversation=conversation, on_model_change=callback)
         provider = routed["provider"]
         response = routed["text"]
         plan = parse_llm_tool_calls(response) if goal.intent_type != IntentType.INFORMATIONAL else None
